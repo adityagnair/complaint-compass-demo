@@ -37,7 +37,8 @@ function App() {
   const [segments, setSegments] = useState([])
   const [trends, setTrends] = useState({ monthly: [], emerging_issues: [] })
   const [segmentFilters, setSegmentFilters] = useState({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' })
-  const [issueData, setIssueData] = useState({ latest_analysis: null, items: [], total_issues: 0, unclustered_count: 0, duplicate_submissions: 0 })
+  const [issueFilters, setIssueFilters] = useState({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' })
+  const [issueData, setIssueData] = useState({ latest_analysis: null, items: [], total_issues: 0, unclustered_count: 0, duplicate_submissions: 0, matched_customers: 0 })
   const [selectedIssue, setSelectedIssue] = useState(null)
   const [search, setSearch] = useState('')
   const [channel, setChannel] = useState('')
@@ -54,9 +55,10 @@ function App() {
       if (search.trim()) query.set('search', search.trim())
       if (channel) query.set('channel', channel)
       if (severity) query.set('severity', severity)
+      const issueQuery = new URLSearchParams(Object.entries(issueFilters).filter(([, value]) => value))
       const [healthRes, overviewRes, complaintsRes, customersRes, issuesRes, segmentsRes, trendsRes] = await Promise.all([
         apiFetch('/api/health'), apiFetch('/api/analytics/overview'),
-        apiFetch(`/api/complaints?${query.toString()}`), apiFetch('/api/customers?limit=200'), apiFetch('/api/issues'),
+        apiFetch(`/api/complaints?${query.toString()}`), apiFetch('/api/customers?limit=200'), apiFetch(`/api/issues?${issueQuery.toString()}`),
         apiFetch('/api/analytics/segments'), apiFetch('/api/analytics/trends'),
       ])
       if (![healthRes, overviewRes, complaintsRes, customersRes, issuesRes, segmentsRes, trendsRes].every((response) => response.ok)) throw new Error('Could not load workspace data')
@@ -64,7 +66,7 @@ function App() {
         healthRes.json(), overviewRes.json(), complaintsRes.json(), customersRes.json(), issuesRes.json(), segmentsRes.json(), trendsRes.json(),
       ])
       setApi(health.status === 'ok' ? 'online' : 'offline')
-      setDemoMode(PUBLIC_DEMO_MODE || health.demo_mode === true)
+      setDemoMode(health.demo_mode === true)
       setOverview(overviewData)
       setComplaints(complaintData.items)
       setCustomers(customerData.items)
@@ -74,7 +76,7 @@ function App() {
     } catch {
       setApi('offline')
     }
-  }, [search, channel, severity])
+  }, [search, channel, severity, issueFilters])
 
   useEffect(() => { loadData() }, [loadData])
   useEffect(() => {
@@ -157,11 +159,14 @@ function App() {
     }
   }
 
-  async function openIssue(clusterId) {
+  async function openIssue(issueSummary) {
     try {
-      const response = await apiFetch(`/api/issues/${encodeURIComponent(clusterId)}`)
+      const issueQuery = new URLSearchParams(Object.entries(issueFilters).filter(([, value]) => value))
+      const queryString = issueQuery.toString()
+      const response = await apiFetch(`/api/issues/${encodeURIComponent(issueSummary.cluster_id)}${queryString ? `?${queryString}` : ''}`)
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Could not load issue details')
+      result.issue = { ...result.issue, ...issueSummary }
       setSelectedIssue(result)
     } catch (error) {
       setNotice(error.message)
@@ -182,7 +187,7 @@ function App() {
         <button className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}><Icon name="overview" />Analytics</button>
         <button className={`nav-item ${view === 'reports' ? 'active' : ''}`} onClick={() => setView('reports')}><Icon name="complaints" />Reports</button>
       </nav>
-      <div className="sidebar-bottom"><span className="workspace-mark">CC</span><div><strong>Demo workspace</strong><small>{demoMode ? 'Sample data · read-only' : 'Local workspace'}</small></div><span className={`service-dot ${api}`} title={`API ${api}`} /></div>
+      <div className="sidebar-bottom"><span className="workspace-mark">CC</span><div><strong>Complaint workspace</strong><small>{demoMode ? 'Sample data · read-only' : 'Writable workspace'}</small></div><span className={`service-dot ${api}`} title={`API ${api}`} /></div>
     </aside>
 
     <section className="main-panel">
@@ -233,6 +238,7 @@ function App() {
 
         {view === 'issues' && <section className="panel data-panel issues-view">
           <div className="panel-heading panel-heading-wrap"><div><h2>{selectedIssue ? selectedIssue.issue.label : 'Top 10 prioritized issues'}</h2><p>{selectedIssue ? selectedIssue.issue.representative_text : 'Ranked by severity, unique report frequency, and affected customers.'}</p></div><div className="issue-actions">{selectedIssue && <button className="button-secondary" onClick={() => setSelectedIssue(null)}>All issues</button>}{!demoMode && <button className="button-primary" onClick={runAnalysis} disabled={analyzing || overview.complaint_count === 0}><Icon name="route" size={16} />{analyzing ? 'Analyzing…' : 'Analyze complaints'}</button>}</div></div>
+          {!selectedIssue && <div className="issue-filter-bar"><div className="issue-filter-heading"><strong>Compare customer groups</strong><span>Rankings recalculate for customers matching these filters.</span></div><div className="issue-filter-controls">{[['country','Country'],['state','State / region'],['age_group','Age group'],['student_status','Student status'],['income_bracket','Income bracket']].map(([key, label]) => <label key={key}>{label}<select value={issueFilters[key]} onChange={(event) => { setIssueFilters({ ...issueFilters, [key]: event.target.value }); setSelectedIssue(null) }}><option value="">All customers</option>{(segmentOptions[key] || []).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}<button className="button-secondary" onClick={() => { setIssueFilters({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' }); setSelectedIssue(null) }}>Clear</button></div></div>}
           <details className="score-method"><summary>How priority is calculated</summary><p><strong>Priority = 0.4S + 0.3F + 0.3I</strong>, rounded to two decimals. S maps average severity from 1–5 to 0–100. F maps unique reports and I maps affected customers relative to the largest value in this analysis run. Repeat submissions are excluded from unique report frequency.</p></details>
           {selectedIssue ? <>
             <div className="issue-summary"><span><strong>{Number(selectedIssue.issue.priority_score).toFixed(1)}</strong> priority score</span><span><strong>{selectedIssue.issue.affected_customers}</strong> affected customers</span><span><strong>{selectedIssue.issue.complaint_count}</strong> unique reports</span><span><strong>{selectedIssue.issue.duplicate_count}</strong> repeat submissions linked</span></div>
@@ -240,8 +246,8 @@ function App() {
             <div className="issue-evidence"><h3>Reports in this issue</h3>{selectedIssue.complaints.map((item) => <article className="evidence-row" key={item.complaint_id}><span className="route-mark"><Icon name="route" size={14} /></span><div><strong>{item.complaint_text}</strong><small>{item.complaint_id} · {item.customer_id || 'Customer unknown'} · {item.channel}</small></div>{item.duplicate_of && <span className="duplicate-tag">Repeat of {item.duplicate_of}</span>}</article>)}</div>
           </> : issueData.items.length ? <>
             {issueData.latest_analysis && <div className="analysis-note">Last run {new Date(issueData.latest_analysis.created_at).toLocaleString()} · {issueData.latest_analysis.embedding_model} · {issueData.latest_analysis.clustering_method}{issueData.latest_analysis.label_model ? ` · labels via ${issueData.latest_analysis.label_model}` : ' · labels via local keywords'}</div>}
-            <div className="issue-summary"><span><strong>{issueData.total_issues}</strong> issues found</span><span><strong>{issueData.duplicate_submissions}</strong> repeat submissions linked</span><span><strong>{issueData.unclustered_count}</strong> unclustered reports</span></div>
-            <div className="issue-list">{issueData.items.map((issue) => <button className="issue-row" key={issue.cluster_id} onClick={() => openIssue(issue.cluster_id)}><span className="issue-route"><Icon name="route" size={17} /></span><span className="issue-name"><strong>{issue.label}</strong><small>{issue.representative_text}</small></span><span className="issue-stat priority-stat"><strong>{Number(issue.priority_score).toFixed(1)}</strong><small>priority</small></span><span className="issue-stat"><strong>{issue.affected_customers}</strong><small>customers</small></span><span className="issue-stat"><strong>{issue.complaint_count}</strong><small>unique</small></span><span className="issue-stat"><strong>{issue.duplicate_count}</strong><small>repeats</small></span><Icon name="arrow" size={16} /></button>)}</div>
+            <div className="issue-summary"><span><strong>{issueData.total_issues}</strong> issues found</span><span><strong>{issueData.matched_customers}</strong> customers in group</span><span><strong>{issueData.duplicate_submissions}</strong> repeat submissions linked</span><span><strong>{issueData.unclustered_count}</strong> unclustered reports</span></div>
+            <div className="issue-list">{issueData.items.map((issue) => <button className="issue-row" key={issue.cluster_id} onClick={() => openIssue(issue)}><span className="issue-route"><Icon name="route" size={17} /></span><span className="issue-name"><strong>{issue.label}</strong><small>{issue.representative_text}</small></span><span className="issue-stat priority-stat"><strong>{Number(issue.priority_score).toFixed(1)}</strong><small>priority</small></span><span className="issue-stat"><strong>{issue.affected_customers}</strong><small>customers</small></span><span className="issue-stat"><strong>{issue.complaint_count}</strong><small>unique</small></span><span className="issue-stat"><strong>{issue.duplicate_count}</strong><small>repeats</small></span><Icon name="arrow" size={16} /></button>)}</div>
           </> : <EmptyState title={overview.complaint_count ? 'Run analysis to find recurring issues' : 'Add complaints before analyzing'} text={overview.complaint_count ? 'The local embedding model will compare complaint meaning, cluster related reports, and link likely repeat submissions from the same customer.' : 'Upload the sample dataset or add customer reports, then run analysis to discover issue groups.'} />}
         </section>}
 

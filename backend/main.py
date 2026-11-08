@@ -12,6 +12,7 @@ from backend.routes.analysis import router as analysis_router
 from backend.routes.complaints import router as complaints_router
 from backend.routes.customers import router as customers_router
 from backend.routes.issues import router as issues_router
+from backend.routes.intake import router as intake_router
 
 
 @asynccontextmanager
@@ -49,6 +50,7 @@ app.include_router(analytics_router)
 app.include_router(analysis_router)
 app.include_router(analysis_compatibility_router)
 app.include_router(issues_router)
+app.include_router(intake_router)
 
 
 @app.get("/api/health", tags=["system"])

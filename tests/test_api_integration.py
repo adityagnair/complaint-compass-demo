@@ -41,6 +41,62 @@ def test_documented_api_aliases_and_compatibility_views(client):
             assert connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0] == 0
 
 
+def test_authenticated_channel_intake_normalizes_and_deduplicates_events(client, monkeypatch):
+    monkeypatch.setenv("INTAKE_WEBHOOK_TOKEN", "test-intake-secret")
+    events = {
+        "email": {"MessageID": "mail-1", "From": "person@example.com", "Subject": "Refund", "TextBody": "My refund has not arrived."},
+        "voice": {"CallSid": "call-1", "From": "+15550001", "SpeechResult": "The delivery never arrived."},
+        "chatbot": {"message_id": "chat-1", "user_id": "customer-1", "message": "The app crashes during payment."},
+        "social": {"post_id": "social-1", "author_id": "social-user-1", "text": "I cannot access my account."},
+    }
+
+    for channel, payload in events.items():
+        response = client.post(
+            f"/api/intake/{channel}",
+            json=payload,
+            headers={"Authorization": "Bearer test-intake-secret"},
+        )
+        assert response.status_code == 202, f"{channel}: {response.text}"
+        assert response.json()["status"] == "accepted"
+        retry = client.post(
+            f"/api/intake/{channel}",
+            json=payload,
+            headers={"X-Intake-Token": "test-intake-secret"},
+        )
+        assert retry.status_code == 202
+        assert retry.json()["status"] == "duplicate"
+
+    complaints = client.get("/api/complaints", params={"limit": 20}).json()["items"]
+    assert {item["channel"] for item in complaints} == set(events)
+    assert len(complaints) == len(events)
+
+
+def test_channel_intake_requires_secret_and_voice_transcript(client, monkeypatch):
+    monkeypatch.setenv("INTAKE_WEBHOOK_TOKEN", "test-intake-secret")
+    unauthorized = client.post("/api/intake/chatbot", json={"text": "Help me with payment"})
+    assert unauthorized.status_code == 401
+
+    no_transcript = client.post(
+        "/api/intake/voice",
+        json={"call_sid": "call-without-transcript"},
+        headers={"X-Intake-Token": "test-intake-secret"},
+    )
+    assert no_transcript.status_code == 422
+
+
+def test_unified_intake_webhook_uses_channel_in_payload(client, monkeypatch):
+    monkeypatch.setenv("INTAKE_WEBHOOK_TOKEN", "test-intake-secret")
+    response = client.post(
+        "/api/intake",
+        json={"channel": "social", "post_id": "post-unified-1", "author_id": "social-user", "text": "My account was locked without warning."},
+        headers={"X-Intake-Token": "test-intake-secret"},
+    )
+    assert response.status_code == 202
+    assert response.json()["channel"] == "social"
+    stored = client.get("/api/complaints", params={"channel": "social"}).json()["items"]
+    assert stored[0]["complaint_text"] == "My account was locked without warning."
+
+
 def test_same_customer_repeat_linking_is_independent_of_channel():
     import numpy as np
 

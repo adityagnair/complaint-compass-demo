@@ -3,7 +3,7 @@ services:
     name: complaint-compass-demo-api
     runtime: python
     plan: free
-    buildCommand: pip install -r backend/requirements-demo.txt
+    buildCommand: pip install -r backend/requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/health
     envVars:
@@ -12,8 +12,12 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: DEMO_MODE
-        value: "true"
+        value: "false"
       - key: CORS_ALLOWED_ORIGINS
-        value: "*"
+        value: "https://complaint-compass-demo.vercel.app"
       - key: OLLAMA_LABELS
         value: "false"
+      - key: EMBEDDING_MODEL
+        value: "sentence-transformers/all-MiniLM-L6-v2"
+      - key: INTAKE_WEBHOOK_TOKEN
+        sync: false

@@ -17,7 +17,7 @@ Customer complaint intake and intelligence platform.
 | Charts | Recharts |
 | Deployment | Vercel + Render |
 
-The app uses React + Vite, Tailwind CSS, FastAPI, and a database adapter that selects PostgreSQL when `DATABASE_URL` is set or SQLite locally. Complaint analysis uses Sentence Transformers (`all-MiniLM-L6-v2`), HDBSCAN from scikit-learn, and optional local Ollama/Qwen2.5 naming. A read-only demo deployment is configured below; production deployment still needs authentication and operational hardening.
+The app uses React + Vite, Tailwind CSS, FastAPI, and a database adapter that selects PostgreSQL when `DATABASE_URL` is set or SQLite locally. Complaint analysis uses Sentence Transformers (`all-MiniLM-L6-v2`), HDBSCAN from scikit-learn, and optional local Ollama/Qwen2.5 naming. The hosted workspace accepts complaint writes and authenticated channel webhooks; use synthetic or approved data until user authentication and operational controls are in place.
 
 ## Requirements
 
@@ -52,6 +52,8 @@ Open <http://localhost:5173>. The dashboard header shows whether the API connect
 
 Add complaints or upload `dataset/complaints.csv`, then open **Issues** and choose **Analyze complaints**. The first analysis downloads `sentence-transformers/all-MiniLM-L6-v2` into the ignored `backend/data/model-cache` folder. Optional labels use local Ollama with `qwen2.5:3b` when available; otherwise the API generates keyword-based labels. To use the LLM labels, install Ollama and pull that model before analysis.
 
+Email, voice, chatbot, and social integrations can forward normalized JSON events to authenticated channel webhooks. See [backend/README.md](backend/README.md#email-voice-chatbot-and-social-intake) for payload fields and deployment requirements. Voice events need a transcript from the voice provider.
+
 Analysis normalizes text, creates semantic embeddings, groups reports with HDBSCAN, links likely repeat submissions only when they share a customer ID, meet the similarity threshold, and fall within the time window, then ranks issue clusters. Defaults are cosine similarity `0.92` and 30 days. Repeat reports remain visible but do not increase a cluster's unique report or affected-customer count. Similar complaints from different customers count as separate affected customers.
 
 ### Issue priority
@@ -75,12 +77,12 @@ The backend checks cover CSV encodings, headers, delimiters and row validation; 
 
 ## Public demo deployment
 
-The included `render.yaml` creates a free Render API service in read-only demo mode. It disables Ollama labeling, allows public browser requests without credentials, and blocks all API writes. Its lean dependency set omits ML packages because issue analysis is precomputed before deployment. The API exposes only synthetic sample data for the public demo; do not point it at a database containing real customer records.
+The included `render.yaml` creates a free, writable Render API service with Sentence Transformers and `sentence-transformers/all-MiniLM-L6-v2` available for analysis. Set its `DATABASE_URL` to a dedicated Supabase project and `INTAKE_WEBHOOK_TOKEN` to a long random secret. The first analysis downloads the model; Render's temporary filesystem may require another download after a service restart. The hosted workspace is publicly writable; do not point it at a database containing real customer records.
 
 1. In Render, create a Blueprint from this repository using `render.yaml`. Set its `DATABASE_URL` to the Supabase pooler URI. The health check is `/api/health`.
 2. Before making the API public, run `python -m backend.seed_demo` once from the repository root with `backend/.env` pointing to the dedicated demo Supabase project. This loads the six synthetic complaints and computes the initial analysis. The script refuses to seed unrelated complaint records.
 3. In Vercel, import the same repository and set the project root to `frontend`. Add `VITE_API_BASE_URL` with the Render service URL, for example `https://complaint-compass-demo-api.onrender.com`, then deploy or redeploy after setting it.
 
-The app uses same-origin relative `/api` requests locally through the Vite proxy. `VITE_API_BASE_URL` switches those calls to the hosted API. `DEMO_MODE=true` hides upload, complaint creation, and analysis controls in the UI and rejects non-read API requests on the backend.
+The app uses same-origin relative `/api` requests locally through the Vite proxy. `VITE_API_BASE_URL` switches those calls to the hosted API. Set `VITE_DEMO_MODE=false` in Vercel so upload and complaint creation controls are visible; Render uses `DEMO_MODE=false` to accept writes.
 
 The free Render API sleeps after 15 minutes without traffic and can take about a minute to wake. This is suitable for a competition or portfolio demo, but expect a delay on the first visit after idle time.

@@ -1,4 +1,5 @@
-# Lean runtime for the public read-only demo; analysis is precomputed before deploy.
+# Optional lean runtime for deployments serving precomputed analysis only.
+# Use requirements.txt when running complaint analysis on the server.
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 python-multipart>=0.0.20,<1.0
