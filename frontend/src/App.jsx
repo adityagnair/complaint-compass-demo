@@ -4,6 +4,7 @@ import './App.css'
 
 const TrendChart = lazy(() => import('./TrendChart.jsx'))
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+const PUBLIC_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true'
 const apiFetch = (path, options) => fetch(`${API_BASE_URL}${path}`, options)
 
 const emptyForm = {
@@ -28,7 +29,7 @@ function Icon({ name, size = 18 }) {
 
 function App() {
   const [api, setApi] = useState('checking')
-  const [demoMode, setDemoMode] = useState(false)
+  const [demoMode, setDemoMode] = useState(PUBLIC_DEMO_MODE)
   const [view, setView] = useState('overview')
   const [overview, setOverview] = useState({ complaint_count: 0, affected_customers: 0, high_severity_count: 0, critical_issue_count: 0, channel_count: 0, customer_count: 0 })
   const [complaints, setComplaints] = useState([])
@@ -63,7 +64,7 @@ function App() {
         healthRes.json(), overviewRes.json(), complaintsRes.json(), customersRes.json(), issuesRes.json(), segmentsRes.json(), trendsRes.json(),
       ])
       setApi(health.status === 'ok' ? 'online' : 'offline')
-      setDemoMode(health.demo_mode === true)
+      setDemoMode(PUBLIC_DEMO_MODE || health.demo_mode === true)
       setOverview(overviewData)
       setComplaints(complaintData.items)
       setCustomers(customerData.items)
