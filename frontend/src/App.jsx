@@ -187,7 +187,7 @@ function App() {
         <button className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}><Icon name="overview" />Analytics</button>
         <button className={`nav-item ${view === 'reports' ? 'active' : ''}`} onClick={() => setView('reports')}><Icon name="complaints" />Reports</button>
       </nav>
-      <div className="sidebar-bottom"><span className="workspace-mark">CC</span><div><strong>Complaint workspace</strong><small>{demoMode ? 'Sample data · read-only' : 'Writable workspace'}</small></div><span className={`service-dot ${api}`} title={`API ${api}`} /></div>
+      <div className="sidebar-bottom"><div><strong>Complaint workspace</strong><small>{demoMode ? 'Sample data · read-only' : 'Writable workspace'}</small></div><span className={`service-dot ${api}`} title={`API ${api}`} /></div>
     </aside>
 
     <section className="main-panel">
