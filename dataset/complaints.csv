@@ -1,0 +1,7 @@
+complaint_id,customer_id,complaint_text,channel,timestamp,severity,country,state,age_group,student_status,income_bracket
+C001,CUST-001,Payment deducted twice,email,2026-11-01T09:12:00Z,4,India,Maharashtra,18-24,yes,under-300000
+C002,CUST-002,Money debited two times,voice,2026-11-01T10:05:00Z,4,India,Karnataka,25-34,no,300000-700000
+C003,CUST-003,Delivery was delayed,chatbot,2026-11-02T14:20:00Z,3,India,Delhi,18-24,yes,under-300000
+C004,CUST-001,Refund not received,email,2026-11-03T08:40:00Z,3,India,Maharashtra,18-24,yes,under-300000
+C005,CUST-004,Charged twice for one order,social,2026-11-03T17:55:00Z,5,India,Tamil Nadu,35-44,no,700000-1500000
+C006,CUST-001,Payment deducted twice,chatbot,2026-11-03T19:10:00Z,4,India,Maharashtra,18-24,yes,under-300000

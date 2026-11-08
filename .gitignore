@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.vscode/
+backend/.db-password.tmp
+backend/data/*.db
+backend/data/model-cache/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
