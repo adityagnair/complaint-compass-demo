@@ -155,7 +155,7 @@ footer { font-size: 12px; }
 .recent-panel .table-scroll th:nth-child(6),
 .recent-panel .table-scroll td:nth-child(6) { width: 8%; }
 .recent-panel .complaint-cell { min-width: 0; gap: 8px; }
-.recent-panel .complaint-cell > div { min-width: 0; }
+.recent-panel .complaint-cell > div { min-width: 0; flex: 1; }
 .recent-panel .complaint-cell strong { max-width: 100%; }
 
 @media (max-width: 680px) {
