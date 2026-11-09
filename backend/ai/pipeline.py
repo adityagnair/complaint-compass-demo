@@ -9,6 +9,7 @@ from backend.ai.clustering import cluster_embeddings
 from backend.ai.embeddings import EMBEDDING_DIMENSIONS, MODEL_NAME, embed_texts
 from backend.ai.labeling import label_clusters
 from backend.ai.preprocessing import normalize_complaint
+from backend.ai.severity import assess_missing_severities
 from backend.database import database
 from backend.services.prioritization import (
     RELATIVE_NORMALIZATION,
@@ -98,6 +99,19 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
             vectors[index] = vector
     embeddings = np.stack(vectors)
     duplicates = _find_duplicates(records, embeddings, duplicate_similarity_threshold, duplicate_window_days)
+    severity_model = None
+    missing_severity = [
+        record for record in records
+        if record.get("severity_source") in {"default", "legacy"}
+    ]
+    for offset in range(0, len(missing_severity), 25):
+        assessed, model = assess_missing_severities(missing_severity[offset:offset + 25])
+        if assessed:
+            for record in missing_severity[offset:offset + 25]:
+                if record["complaint_id"] in assessed:
+                    record["severity"] = assessed[record["complaint_id"]]
+                    record["severity_source"] = "ollama"
+            severity_model = model
     primary_indices = [index for index in range(len(records)) if index not in duplicates]
     model_labels = cluster_embeddings(embeddings[primary_indices], min_cluster_size)
 
@@ -130,7 +144,10 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
     for cluster_number, indices in sorted(groups.items()):
         primary_members = [index for index in indices if index not in duplicates]
         customer_ids = {records[index].get("customer_id") for index in primary_members if records[index].get("customer_id")}
-        known_severities = [records[index]["severity"] for index in primary_members if records[index].get("severity_source") == "provided"]
+        known_severities = [
+            records[index]["severity"] for index in primary_members
+            if records[index].get("severity_source") in {"provided", "ollama"}
+        ]
         duplicate_count = sum(index in duplicates for index in indices)
         cluster_id = cluster_ids[cluster_number]
         label, label_source = labels[cluster_number]
@@ -153,6 +170,10 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
             "duplicate_count": duplicate_count,
             "average_severity": round(float(np.mean(known_severities)), 2) if known_severities else None,
             "severity_coverage": len(known_severities) / len(primary_members) if primary_members else 0.0,
+            "severity_source_counts": {
+                source: sum(records[index].get("severity_source") == source for index in primary_members)
+                for source in ("provided", "ollama")
+            },
             "cohesion_score": round(max(-1.0, min(1.0, cohesion)) * 100, 2),
             "members": indices,
         })
@@ -187,10 +208,12 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
             cluster_id = cluster_ids.get(cluster_number)
             duplicate_index = duplicates.get(index)
             connection.execute(
-                """UPDATE complaints SET normalized_text = ?, embedding = ?, embedding_model = ?, issue_cluster_id = ?, duplicate_of = ?
+                """UPDATE complaints SET normalized_text = ?, embedding = ?, embedding_model = ?, issue_cluster_id = ?, duplicate_of = ?,
+                       severity = ?, severity_source = ?
                    WHERE complaint_id = ?""",
                 (normalized[index], json.dumps(embeddings[index].tolist(), separators=(",", ":")), MODEL_NAME, cluster_id,
-                 records[duplicate_index]["complaint_id"] if duplicate_index is not None else None, record["complaint_id"]),
+                 records[duplicate_index]["complaint_id"] if duplicate_index is not None else None,
+                 record["severity"], record["severity_source"], record["complaint_id"]),
             )
 
     return {
@@ -202,6 +225,7 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
         "unclustered_count": sum(primary_cluster.get(index, -1) < 0 and index not in duplicates for index in range(len(records))),
         "duplicate_submissions": len(duplicates),
         "label_model": label_model,
+        "severity_model": severity_model,
         "scoring_formula": SCORING_FORMULA,
         "scoring_weights": SCORING_WEIGHTS,
         "severity_normalization": SEVERITY_NORMALIZATION,

@@ -19,6 +19,10 @@ services:
         value: "https://complaint-compass-demo.vercel.app"
       - key: OLLAMA_LABELS
         value: "false"
+      - key: OLLAMA_SEVERITY
+        value: "true"
+      - key: OLLAMA_BASE_URL
+        sync: false
       - key: EMBEDDING_MODEL
         value: "sentence-transformers/all-MiniLM-L6-v2"
       - key: INTAKE_WEBHOOK_TOKEN

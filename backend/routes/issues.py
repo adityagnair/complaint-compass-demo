@@ -69,15 +69,19 @@ def list_issues(
             item["submission_count"] = len(evidence)
             item["duplicate_count"] = len(evidence) - len(primary)
             item["affected_customers"] = len({row["customer_id"] for row in primary if row["customer_id"]})
-            known_severities = [row["severity"] for row in primary if row["severity_source"] == "provided"]
+            known_severities = [row["severity"] for row in primary if row["severity_source"] in {"provided", "ollama"}]
             item["severity_coverage"] = len(known_severities) / len(primary) if primary else 0.0
             item["severity_missing_count"] = len(primary) - len(known_severities)
+            item["severity_source_counts"] = {
+                source: sum(row["severity_source"] == source for row in primary)
+                for source in ("provided", "ollama")
+            }
             item["average_severity"] = round(sum(known_severities) / len(known_severities), 2) if known_severities else None
             item["needs_review"] = float(item.get("cohesion_score") or 0) < LOW_COHESION_REVIEW_THRESHOLD
             items.append(item)
             item["workflow"] = workflow_for_label(connection, item["label"])
         score_issues(items)
-        items.sort(key=lambda item: (-item["priority_score"], -item["affected_customers"], -item["complaint_count"]))
+        items.sort(key=lambda item: (-item["priority_score"], -item["complaint_count"], item["label"]))
         total_issues = len(items)
         duplicates = sum(item["duplicate_count"] for item in items)
         unclustered = connection.execute(

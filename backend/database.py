@@ -196,10 +196,10 @@ def initialize_database() -> None:
             complaints_processed INTEGER NOT NULL,
             issues_found INTEGER NOT NULL,
             label_model TEXT,
-            scoring_formula TEXT NOT NULL DEFAULT 'Priority = 0.4S + 0.3F + 0.3I',
-            scoring_weights TEXT NOT NULL DEFAULT '{"severity":0.4,"frequency":0.3,"impact":0.3}',
+            scoring_formula TEXT NOT NULL DEFAULT 'Priority = wS*S + wF*F',
+            scoring_weights TEXT NOT NULL DEFAULT '{"severity":0.5,"frequency":0.5}',
             severity_normalization TEXT NOT NULL DEFAULT 'S = ((average severity on 1–5 scale - 1) / 4) × 100',
-            relative_normalization TEXT NOT NULL DEFAULT 'F and I = (issue value / maximum value in this analysis run) × 100',
+            relative_normalization TEXT NOT NULL DEFAULT 'F = unique complaint count / maximum unique complaint count in this analysis run × 100',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS issue_clusters (
@@ -218,9 +218,9 @@ def initialize_database() -> None:
             impact_score REAL NOT NULL DEFAULT 0,
             priority_score REAL NOT NULL DEFAULT 0,
             severity_coverage REAL NOT NULL DEFAULT 0,
-            severity_weight REAL NOT NULL DEFAULT 0,
-            frequency_weight REAL NOT NULL DEFAULT 0.3,
-            impact_weight REAL NOT NULL DEFAULT 0.3,
+            severity_weight REAL NOT NULL DEFAULT 0.5,
+            frequency_weight REAL NOT NULL DEFAULT 0.5,
+            impact_weight REAL NOT NULL DEFAULT 0,
             cohesion_score REAL NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id) ON DELETE CASCADE
@@ -239,10 +239,10 @@ def initialize_database() -> None:
             connection.executescript(analysis_schema)
             run_columns = {row[1] for row in connection.execute("PRAGMA table_info(analysis_runs)").fetchall()}
             for column, definition in (
-                ("scoring_formula", "TEXT NOT NULL DEFAULT 'Priority = 0.4S + 0.3F + 0.3I'"),
-                ("scoring_weights", "TEXT NOT NULL DEFAULT '{\"severity\":0.4,\"frequency\":0.3,\"impact\":0.3}'"),
+                ("scoring_formula", "TEXT NOT NULL DEFAULT 'Priority = wS*S + wF*F'"),
+                ("scoring_weights", "TEXT NOT NULL DEFAULT '{\"severity\":0.5,\"frequency\":0.5}'"),
                 ("severity_normalization", "TEXT NOT NULL DEFAULT 'S = ((average severity on 1–5 scale - 1) / 4) × 100'"),
-                ("relative_normalization", "TEXT NOT NULL DEFAULT 'F and I = (issue value / maximum value in this analysis run) × 100'"),
+                ("relative_normalization", "TEXT NOT NULL DEFAULT 'F = unique complaint count / maximum unique complaint count in this analysis run × 100'"),
             ):
                 if column not in run_columns:
                     connection.execute(f"ALTER TABLE analysis_runs ADD COLUMN {column} {definition}")
@@ -254,9 +254,9 @@ def initialize_database() -> None:
                 ("impact_score", "REAL NOT NULL DEFAULT 0"),
                 ("priority_score", "REAL NOT NULL DEFAULT 0"),
                 ("severity_coverage", "REAL NOT NULL DEFAULT 0"),
-                ("severity_weight", "REAL NOT NULL DEFAULT 0"),
-                ("frequency_weight", "REAL NOT NULL DEFAULT 0.3"),
-                ("impact_weight", "REAL NOT NULL DEFAULT 0.3"),
+                ("severity_weight", "REAL NOT NULL DEFAULT 0.5"),
+                ("frequency_weight", "REAL NOT NULL DEFAULT 0.5"),
+                ("impact_weight", "REAL NOT NULL DEFAULT 0"),
                 ("cohesion_score", "REAL NOT NULL DEFAULT 0"),
             ):
                 if column not in cluster_columns:
@@ -265,10 +265,10 @@ def initialize_database() -> None:
             postgres_analysis_schema = analysis_schema.replace("created_at TEXT NOT NULL", "created_at TIMESTAMPTZ NOT NULL")
             connection.executescript(postgres_analysis_schema)
             for column, definition in (
-                ("scoring_formula", "TEXT NOT NULL DEFAULT 'Priority = 0.4S + 0.3F + 0.3I'"),
-                ("scoring_weights", "TEXT NOT NULL DEFAULT '{\"severity\":0.4,\"frequency\":0.3,\"impact\":0.3}'"),
+                ("scoring_formula", "TEXT NOT NULL DEFAULT 'Priority = wS*S + wF*F'"),
+                ("scoring_weights", "TEXT NOT NULL DEFAULT '{\"severity\":0.5,\"frequency\":0.5}'"),
                 ("severity_normalization", "TEXT NOT NULL DEFAULT 'S = ((average severity on 1–5 scale - 1) / 4) × 100'"),
-                ("relative_normalization", "TEXT NOT NULL DEFAULT 'F and I = (issue value / maximum value in this analysis run) × 100'"),
+                ("relative_normalization", "TEXT NOT NULL DEFAULT 'F = unique complaint count / maximum unique complaint count in this analysis run × 100'"),
             ):
                 connection.execute(f"ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS {column} {definition}")
             for column, definition in (
@@ -278,9 +278,9 @@ def initialize_database() -> None:
                 ("impact_score", "REAL NOT NULL DEFAULT 0"),
                 ("priority_score", "REAL NOT NULL DEFAULT 0"),
                 ("severity_coverage", "REAL NOT NULL DEFAULT 0"),
-                ("severity_weight", "REAL NOT NULL DEFAULT 0"),
-                ("frequency_weight", "REAL NOT NULL DEFAULT 0.3"),
-                ("impact_weight", "REAL NOT NULL DEFAULT 0.3"),
+                ("severity_weight", "REAL NOT NULL DEFAULT 0.5"),
+                ("frequency_weight", "REAL NOT NULL DEFAULT 0.5"),
+                ("impact_weight", "REAL NOT NULL DEFAULT 0"),
                 ("cohesion_score", "REAL NOT NULL DEFAULT 0"),
             ):
                 connection.execute(f"ALTER TABLE issue_clusters ADD COLUMN IF NOT EXISTS {column} {definition}")

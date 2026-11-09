@@ -221,6 +221,7 @@ footer { font-size: 12px; }
 .cohort-clear { justify-self: end; min-height: 30px; padding: 5px 9px; font-size: 11px; }
 .compare-groups-button { grid-column: 1 / -1; justify-self: end; min-width: 150px; }
 .score-components { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.priority-score-components { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .group-quality { display: grid; gap: 5px; padding: 13px 20px; border-bottom: 1px solid var(--line); color: var(--secondary); font-size: 12px; }
 .group-quality strong { color: var(--ink); font-weight: 550; }
 .group-quality.needs-review { background: #282319; color: #e0c783; }
