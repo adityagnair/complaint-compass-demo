@@ -9,7 +9,7 @@ compatibility_router = APIRouter(tags=["analysis"])
 @router.post("/run")
 def analyze_complaints(settings: AnalysisRequest):
     # Import the ML stack only when an analysis request actually runs. The
-    # read-only public demo rejects POST requests before this route is called.
+    # Analysis is a workspace write operation and is protected by workspace auth when enabled.
     from backend.ai.embeddings import EmbeddingModelUnavailable
     from backend.ai.pipeline import run_analysis
 

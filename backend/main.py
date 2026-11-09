@@ -32,20 +32,20 @@ allowed_origins = [
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if DEMO_MODE else allowed_origins,
-    allow_credentials=not DEMO_MODE,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 @app.middleware("http")
-async def public_demo_read_only(request: Request, call_next):
+async def workspace_access_control(request: Request, call_next):
     path = request.url.path
     is_public_health = path == "/api/health"
     is_webhook = path == "/api/intake" or path.startswith("/api/intake/")
     workspace_token = os.getenv("WORKSPACE_ACCESS_TOKEN", "").strip()
-    if path.startswith("/api/") and not is_public_health and not is_webhook and request.method != "OPTIONS" and WORKSPACE_AUTH_ENABLED and not DEMO_MODE:
+    if path.startswith("/api/") and not is_public_health and not is_webhook and request.method != "OPTIONS" and WORKSPACE_AUTH_ENABLED:
         if not workspace_token:
             return JSONResponse(status_code=503, content={"detail": "Workspace access is not configured."})
         supplied = request.headers.get("X-Workspace-Token", "")
@@ -54,8 +54,8 @@ async def public_demo_read_only(request: Request, call_next):
             supplied = authorization[7:].strip()
         if not supplied or not hmac.compare_digest(supplied, workspace_token):
             return JSONResponse(status_code=401, content={"detail": "Workspace access is required."})
-    if DEMO_MODE and request.url.path.startswith("/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
-        return JSONResponse(status_code=403, content={"detail": "This public demo is read-only."})
+    if DEMO_MODE and not WORKSPACE_AUTH_ENABLED and path.startswith("/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        return JSONResponse(status_code=403, content={"detail": "This unauthenticated public demo is read-only."})
     return await call_next(request)
 
 
@@ -76,5 +76,5 @@ def health_check() -> dict[str, str | bool]:
         "status": "ok",
         "service": "complaint-compass-api",
         "database": "postgresql" if DATABASE_URL else "sqlite",
-        "demo_mode": DEMO_MODE,
+        "demo_mode": DEMO_MODE and not WORKSPACE_AUTH_ENABLED,
     }
