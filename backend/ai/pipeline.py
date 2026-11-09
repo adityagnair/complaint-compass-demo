@@ -69,7 +69,7 @@ def _representative(indices: list[int], embeddings: np.ndarray, records: list[di
 def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: float = 0.92, duplicate_window_days: int = 30) -> dict:
     with database() as connection:
         records = [dict(row) for row in connection.execute(
-            """SELECT complaint_id, customer_id, complaint_text, submitted_at, severity,
+            """SELECT complaint_id, customer_id, complaint_text, submitted_at, severity, severity_source,
                       normalized_text, embedding, embedding_model
                FROM complaints ORDER BY submitted_at ASC, id ASC"""
         ).fetchall()]
@@ -130,9 +130,18 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
     for cluster_number, indices in sorted(groups.items()):
         primary_members = [index for index in indices if index not in duplicates]
         customer_ids = {records[index].get("customer_id") for index in primary_members if records[index].get("customer_id")}
+        known_severities = [records[index]["severity"] for index in primary_members if records[index].get("severity_source") == "provided"]
         duplicate_count = sum(index in duplicates for index in indices)
         cluster_id = cluster_ids[cluster_number]
         label, label_source = labels[cluster_number]
+        member_vectors = embeddings[primary_members]
+        if len(member_vectors) > 1:
+            unit_vectors = member_vectors / np.maximum(np.linalg.norm(member_vectors, axis=1, keepdims=True), 1e-12)
+            vector_sum = unit_vectors.sum(axis=0)
+            pair_count = len(unit_vectors) * (len(unit_vectors) - 1)
+            cohesion = float((np.dot(vector_sum, vector_sum) - len(unit_vectors)) / pair_count)
+        else:
+            cohesion = 1.0
         clusters.append({
             "cluster_id": cluster_id,
             "label": label,
@@ -142,7 +151,9 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
             "submission_count": len(indices),
             "affected_customers": len(customer_ids),
             "duplicate_count": duplicate_count,
-            "average_severity": round(float(np.mean([records[index]["severity"] for index in primary_members])), 2),
+            "average_severity": round(float(np.mean(known_severities)), 2) if known_severities else None,
+            "severity_coverage": len(known_severities) / len(primary_members) if primary_members else 0.0,
+            "cohesion_score": round(max(-1.0, min(1.0, cohesion)) * 100, 2),
             "members": indices,
         })
     score_issues(clusters)
@@ -161,12 +172,15 @@ def run_analysis(*, min_cluster_size: int = 2, duplicate_similarity_threshold: f
             connection.execute(
                 """INSERT INTO issue_clusters (cluster_id, run_id, label, label_source, representative_text,
                      complaint_count, submission_count, affected_customers, duplicate_count, average_severity,
-                     severity_score, frequency_score, impact_score, priority_score)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                     severity_score, frequency_score, impact_score, priority_score, severity_coverage, severity_weight,
+                     frequency_weight, impact_weight, cohesion_score)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (cluster["cluster_id"], run_id, cluster["label"], cluster["label_source"], cluster["representative_text"],
                  cluster["complaint_count"], cluster["submission_count"], cluster["affected_customers"],
-                 cluster["duplicate_count"], cluster["average_severity"], cluster["severity_score"],
-                 cluster["frequency_score"], cluster["impact_score"], cluster["priority_score"]),
+                 cluster["duplicate_count"], cluster["average_severity"] if cluster["average_severity"] is not None else 3.0,
+                 cluster["severity_score"], cluster["frequency_score"], cluster["impact_score"], cluster["priority_score"],
+                 cluster["severity_coverage"], cluster["severity_weight"], cluster["frequency_weight"],
+                 cluster["impact_weight"], cluster["cohesion_score"]),
             )
         for index, record in enumerate(records):
             cluster_number = primary_cluster.get(index, -1)

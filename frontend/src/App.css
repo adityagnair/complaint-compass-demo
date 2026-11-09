@@ -209,3 +209,19 @@ footer { font-size: 12px; }
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .pagination button:disabled { opacity: .45; cursor: default; }
 @media (max-width: 760px) { .workflow-editor { grid-template-columns: 1fr 1fr; padding: 14px 12px; }.workflow-editor > div:first-child, .workflow-notes { grid-column: 1 / -1; }.cohort-compare { padding: 14px 12px; }.cohort-compare th, .cohort-compare td { padding: 7px 4px; font-size: 10px; } }
+.issue-filter-bar { display: grid; gap: 12px; align-items: start; padding: 16px 20px; border-bottom: 1px solid var(--line); background: #1b1b1b; }
+.issue-filter-heading { display: grid; gap: 4px; }
+.issue-filter-heading strong { color: var(--ink); font-size: 13px; font-weight: 550; }
+.issue-filter-heading span { color: var(--muted); font-size: 12px; }
+.cohort-filter-block { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #171717; }
+.cohort-filter-block > strong { color: var(--ink); font-size: 12px; font-weight: 550; }
+.cohort-filter-block .issue-filter-controls { display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); gap: 8px; }
+.cohort-filter-block label { display: grid; gap: 5px; color: var(--secondary); font-size: 11px; }
+.cohort-filter-block select { width: 100%; min-width: 0; height: 34px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--ink); font-size: 11px; }
+.compare-groups-button { justify-self: end; }
+.score-components { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.group-quality { display: grid; gap: 5px; padding: 13px 20px; border-bottom: 1px solid var(--line); color: var(--secondary); font-size: 12px; }
+.group-quality strong { color: var(--ink); font-weight: 550; }
+.group-quality.needs-review { background: #282319; color: #e0c783; }
+.group-quality.needs-review strong { color: #e0c783; }
+@media (max-width: 760px) { .issue-filter-bar { padding: 12px; }.cohort-filter-block .issue-filter-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }.score-components { grid-template-columns: repeat(2, minmax(0, 1fr)); }.compare-groups-button { justify-self: stretch; } }

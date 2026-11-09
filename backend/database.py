@@ -162,7 +162,7 @@ def initialize_database() -> None:
                 ("embedding_model", "TEXT"),
                 ("issue_cluster_id", "TEXT"),
                 ("duplicate_of", "TEXT"),
-                ("severity_source", "TEXT NOT NULL DEFAULT 'default'"),
+                ("severity_source", "TEXT NOT NULL DEFAULT 'legacy'"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE complaints ADD COLUMN {column} {data_type}")
@@ -179,9 +179,12 @@ def initialize_database() -> None:
                 ("embedding_model", "TEXT"),
                 ("issue_cluster_id", "TEXT"),
                 ("duplicate_of", "TEXT"),
-                ("severity_source", "TEXT NOT NULL DEFAULT 'default'"),
+                ("severity_source", "TEXT NOT NULL DEFAULT 'legacy'"),
             ):
                 connection.execute(f"ALTER TABLE complaints ADD COLUMN IF NOT EXISTS {column} {data_type}")
+        connection.execute(
+            "UPDATE complaints SET severity_source = CASE WHEN severity <> 3 THEN 'provided' ELSE 'legacy' END WHERE severity_source = 'legacy'"
+        )
         analysis_schema = """
         CREATE TABLE IF NOT EXISTS analysis_runs (
             run_id TEXT PRIMARY KEY,
@@ -214,6 +217,11 @@ def initialize_database() -> None:
             frequency_score REAL NOT NULL DEFAULT 0,
             impact_score REAL NOT NULL DEFAULT 0,
             priority_score REAL NOT NULL DEFAULT 0,
+            severity_coverage REAL NOT NULL DEFAULT 0,
+            severity_weight REAL NOT NULL DEFAULT 0,
+            frequency_weight REAL NOT NULL DEFAULT 0.3,
+            impact_weight REAL NOT NULL DEFAULT 0.3,
+            cohesion_score REAL NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id) ON DELETE CASCADE
         );
@@ -245,6 +253,11 @@ def initialize_database() -> None:
                 ("frequency_score", "REAL NOT NULL DEFAULT 0"),
                 ("impact_score", "REAL NOT NULL DEFAULT 0"),
                 ("priority_score", "REAL NOT NULL DEFAULT 0"),
+                ("severity_coverage", "REAL NOT NULL DEFAULT 0"),
+                ("severity_weight", "REAL NOT NULL DEFAULT 0"),
+                ("frequency_weight", "REAL NOT NULL DEFAULT 0.3"),
+                ("impact_weight", "REAL NOT NULL DEFAULT 0.3"),
+                ("cohesion_score", "REAL NOT NULL DEFAULT 0"),
             ):
                 if column not in cluster_columns:
                     connection.execute(f"ALTER TABLE issue_clusters ADD COLUMN {column} {definition}")
@@ -264,6 +277,11 @@ def initialize_database() -> None:
                 ("frequency_score", "REAL NOT NULL DEFAULT 0"),
                 ("impact_score", "REAL NOT NULL DEFAULT 0"),
                 ("priority_score", "REAL NOT NULL DEFAULT 0"),
+                ("severity_coverage", "REAL NOT NULL DEFAULT 0"),
+                ("severity_weight", "REAL NOT NULL DEFAULT 0"),
+                ("frequency_weight", "REAL NOT NULL DEFAULT 0.3"),
+                ("impact_weight", "REAL NOT NULL DEFAULT 0.3"),
+                ("cohesion_score", "REAL NOT NULL DEFAULT 0"),
             ):
                 connection.execute(f"ALTER TABLE issue_clusters ADD COLUMN IF NOT EXISTS {column} {definition}")
 
@@ -272,7 +290,8 @@ def initialize_database() -> None:
         compatibility_views = {
             "clusters": """SELECT cluster_id, run_id, label, label_source, representative_text,
                 complaint_count, submission_count, affected_customers, duplicate_count, average_severity,
-                severity_score, frequency_score, impact_score, priority_score, created_at FROM issue_clusters""",
+                severity_score, frequency_score, impact_score, priority_score, severity_coverage,
+                severity_weight, frequency_weight, impact_weight, cohesion_score, created_at FROM issue_clusters""",
             "complaint_clusters": """SELECT complaint_id, issue_cluster_id AS cluster_id, duplicate_of
                 FROM complaints WHERE issue_cluster_id IS NOT NULL""",
             "benchmark_runs": """SELECT run_id AS benchmark_run_id, embedding_model, clustering_method,
@@ -280,7 +299,8 @@ def initialize_database() -> None:
                 complaints_processed, issues_found, label_model, scoring_formula, scoring_weights,
                 created_at FROM analysis_runs""",
             "issue_scores": """SELECT cluster_id, run_id, severity_score, frequency_score, impact_score,
-                priority_score FROM issue_clusters""",
+                priority_score, severity_coverage, severity_weight, frequency_weight, impact_weight
+                FROM issue_clusters""",
         }
         if _engine is None:
             for name, query in compatibility_views.items():

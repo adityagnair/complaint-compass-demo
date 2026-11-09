@@ -6,6 +6,7 @@ from backend.services.issue_workflow import issue_key, workflow_for_label
 from backend.services.prioritization import score_issues
 
 router = APIRouter(prefix="/api/issues", tags=["issues"])
+LOW_COHESION_REVIEW_THRESHOLD = 65.0
 
 
 @router.get("/top10")
@@ -46,7 +47,7 @@ def list_issues(
             conditions_sql = f" AND {cohort_where}" if cohort_where else ""
             rows = connection.execute(
                 f"""SELECT complaints.complaint_id, complaints.customer_id, complaints.complaint_text,
-                          complaints.severity, complaints.duplicate_of, complaints.issue_cluster_id,
+                          complaints.severity, complaints.severity_source, complaints.duplicate_of, complaints.issue_cluster_id,
                           customers.country, customers.state, customers.age_group,
                           customers.student_status, customers.income_bracket
                    FROM complaints LEFT JOIN customers USING (customer_id)
@@ -68,7 +69,11 @@ def list_issues(
             item["submission_count"] = len(evidence)
             item["duplicate_count"] = len(evidence) - len(primary)
             item["affected_customers"] = len({row["customer_id"] for row in primary if row["customer_id"]})
-            item["average_severity"] = round(sum(row["severity"] for row in primary) / len(primary), 2)
+            known_severities = [row["severity"] for row in primary if row["severity_source"] == "provided"]
+            item["severity_coverage"] = len(known_severities) / len(primary) if primary else 0.0
+            item["severity_missing_count"] = len(primary) - len(known_severities)
+            item["average_severity"] = round(sum(known_severities) / len(known_severities), 2) if known_severities else None
+            item["needs_review"] = float(item.get("cohesion_score") or 0) < LOW_COHESION_REVIEW_THRESHOLD
             items.append(item)
             item["workflow"] = workflow_for_label(connection, item["label"])
         score_issues(items)
@@ -127,13 +132,19 @@ def get_issue(
                 values.append(value)
         complaints = connection.execute(
             """SELECT complaints.complaint_id, complaints.customer_id, complaints.complaint_text,
-                      complaints.channel, complaints.submitted_at, complaints.severity, complaints.duplicate_of
+                      complaints.channel, complaints.submitted_at, complaints.severity,
+                      complaints.severity_source, complaints.duplicate_of
                FROM complaints LEFT JOIN customers USING (customer_id)
                WHERE """ + " AND ".join(conditions) + " ORDER BY complaints.submitted_at ASC",
             values,
         ).fetchall()
         workflow = workflow_for_label(connection, issue["label"])
-    return {"issue": {**dict(issue), "workflow": workflow}, "complaints": [dict(row) for row in complaints]}
+    issue_data = dict(issue)
+    if issue_data.get("severity_coverage", 0) <= 0:
+        issue_data["average_severity"] = None
+    issue_data["needs_review"] = float(issue_data.get("cohesion_score") or 0) < LOW_COHESION_REVIEW_THRESHOLD
+    issue_data["workflow"] = workflow
+    return {"issue": issue_data, "complaints": [dict(row) for row in complaints]}
 
 
 @router.patch("/{cluster_id}/workflow")
