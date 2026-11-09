@@ -187,3 +187,25 @@ footer { font-size: 12px; }
   .report-preview span,
   .report-preview strong { color: #111 !important; }
 }
+
+.access-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--page); color: var(--ink); }
+.access-card { width: min(100%, 400px); display: grid; gap: 16px; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.access-card h1 { margin: 0; font-size: 22px; font-weight: 550; }
+.access-card p { margin: 0; color: var(--secondary); line-height: 1.5; }
+.access-card label, .workflow-editor label { display: grid; gap: 7px; color: var(--secondary); font-size: 12px; }
+.access-card input, .workflow-editor input, .workflow-editor select, .workflow-editor textarea { width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); color: var(--ink); font: inherit; }
+.cohort-compare { padding: 18px 20px; border-bottom: 1px solid var(--line); background: #171717; }
+.cohort-compare h3, .workflow-editor h3 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 550; }
+.cohort-compare p, .workflow-editor p { margin: 5px 0 12px; color: var(--muted); font-size: 12px; }
+.cohort-compare table { width: 100%; border-collapse: collapse; color: var(--secondary); font-size: 12px; }
+.cohort-compare th, .cohort-compare td { padding: 9px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+.cohort-compare th { color: var(--muted); font-weight: 500; }
+.workflow-editor { display: grid; grid-template-columns: 1fr 150px minmax(150px, 1fr) auto; align-items: end; gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); background: #171717; }
+.workflow-notes { grid-column: 1 / 4; }
+.workflow-editor textarea { resize: vertical; }
+.topbar-actions { display: flex; align-items: center; gap: 14px; }
+.signout-button { min-height: 32px; padding-block: 5px; font-size: 11px; }
+.stale-analysis { padding: 12px 20px; border-bottom: 1px solid #51452b; background: #282319; color: #e0c783; font-size: 12px; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.pagination button:disabled { opacity: .45; cursor: default; }
+@media (max-width: 760px) { .workflow-editor { grid-template-columns: 1fr 1fr; padding: 14px 12px; }.workflow-editor > div:first-child, .workflow-notes { grid-column: 1 / -1; }.cohort-compare { padding: 14px 12px; }.cohort-compare th, .cohort-compare td { padding: 7px 4px; font-size: 10px; } }

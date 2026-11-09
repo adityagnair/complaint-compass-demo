@@ -5,7 +5,13 @@ import './App.css'
 const TrendChart = lazy(() => import('./TrendChart.jsx'))
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
 const PUBLIC_DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true'
-const apiFetch = (path, options) => fetch(`${API_BASE_URL}${path}`, options)
+const apiFetch = (path, options = {}) => {
+  const token = window.sessionStorage.getItem('workspace-access-token')
+  return fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: { ...options.headers, ...(token ? { 'X-Workspace-Token': token } : {}) },
+  })
+}
 
 const emptyForm = {
   complaint_id: '', customer_id: '', complaint_text: '', channel: 'email', severity: 3,
@@ -29,17 +35,24 @@ function Icon({ name, size = 18 }) {
 
 function App() {
   const [api, setApi] = useState('checking')
+  const [accessRequired, setAccessRequired] = useState(false)
+  const [accessToken, setAccessToken] = useState('')
+  const [accessMessage, setAccessMessage] = useState('')
   const [demoMode, setDemoMode] = useState(PUBLIC_DEMO_MODE)
   const [view, setView] = useState('overview')
   const [overview, setOverview] = useState({ complaint_count: 0, affected_customers: 0, high_severity_count: 0, critical_issue_count: 0, channel_count: 0, customer_count: 0 })
   const [complaints, setComplaints] = useState([])
+  const [complaintTotal, setComplaintTotal] = useState(0)
+  const [complaintOffset, setComplaintOffset] = useState(0)
   const [customers, setCustomers] = useState([])
   const [segments, setSegments] = useState([])
   const [trends, setTrends] = useState({ monthly: [], emerging_issues: [] })
   const [segmentFilters, setSegmentFilters] = useState({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' })
   const [issueFilters, setIssueFilters] = useState({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' })
   const [issueData, setIssueData] = useState({ latest_analysis: null, items: [], total_issues: 0, unclustered_count: 0, duplicate_submissions: 0, matched_customers: 0 })
+  const [comparisonData, setComparisonData] = useState(null)
   const [selectedIssue, setSelectedIssue] = useState(null)
+  const [workflowForm, setWorkflowForm] = useState({ status: 'open', owner: '', notes: '' })
   const [search, setSearch] = useState('')
   const [channel, setChannel] = useState('')
   const [severity, setSeverity] = useState('')
@@ -55,20 +68,33 @@ function App() {
       if (search.trim()) query.set('search', search.trim())
       if (channel) query.set('channel', channel)
       if (severity) query.set('severity', severity)
+      query.set('limit', '100')
+      query.set('offset', String(complaintOffset))
       const issueQuery = new URLSearchParams(Object.entries(issueFilters).filter(([, value]) => value))
       const [healthRes, overviewRes, complaintsRes, customersRes, issuesRes, segmentsRes, trendsRes] = await Promise.all([
         apiFetch('/api/health'), apiFetch('/api/analytics/overview'),
         apiFetch(`/api/complaints?${query.toString()}`), apiFetch('/api/customers?limit=200'), apiFetch(`/api/issues?${issueQuery.toString()}`),
         apiFetch('/api/analytics/segments'), apiFetch('/api/analytics/trends'),
       ])
+      const accessError = [healthRes, overviewRes, complaintsRes, customersRes, issuesRes, segmentsRes, trendsRes].find((response) => response.status === 401 || response.status === 503)
+      if (accessError) {
+        const detail = await accessError.json().catch(() => ({}))
+        setAccessRequired(true)
+        setAccessMessage(detail.detail || 'Enter the workspace access token to continue.')
+        setApi('offline')
+        return
+      }
       if (![healthRes, overviewRes, complaintsRes, customersRes, issuesRes, segmentsRes, trendsRes].every((response) => response.ok)) throw new Error('Could not load workspace data')
       const [health, overviewData, complaintData, customerData, issueResult, segmentResult, trendResult] = await Promise.all([
         healthRes.json(), overviewRes.json(), complaintsRes.json(), customersRes.json(), issuesRes.json(), segmentsRes.json(), trendsRes.json(),
       ])
       setApi(health.status === 'ok' ? 'online' : 'offline')
+      setAccessRequired(false)
+      setAccessMessage('')
       setDemoMode(health.demo_mode === true)
       setOverview(overviewData)
       setComplaints(complaintData.items)
+      setComplaintTotal(complaintData.total)
       setCustomers(customerData.items)
       setIssueData(issueResult)
       setSegments(segmentResult.items)
@@ -76,9 +102,10 @@ function App() {
     } catch {
       setApi('offline')
     }
-  }, [search, channel, severity, issueFilters])
+  }, [search, channel, severity, issueFilters, complaintOffset])
 
   useEffect(() => { loadData() }, [loadData])
+  useEffect(() => { setComplaintOffset(0) }, [search, channel, severity])
   useEffect(() => {
     if (!notice) return undefined
     const timer = window.setTimeout(() => setNotice(''), 5000)
@@ -168,12 +195,57 @@ function App() {
       if (!response.ok) throw new Error(result.detail || 'Could not load issue details')
       result.issue = { ...result.issue, ...issueSummary }
       setSelectedIssue(result)
+      setWorkflowForm({ status: result.issue.workflow?.status || 'open', owner: result.issue.workflow?.owner || '', notes: result.issue.workflow?.notes || '' })
+    } catch (error) {
+      setNotice(error.message)
+    }
+  }
+
+  async function compareWithAllCustomers() {
+    try {
+      const response = await apiFetch('/api/issues')
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'Could not compare customer groups')
+      setComparisonData(result)
+    } catch (error) {
+      setNotice(error.message)
+    }
+  }
+
+  async function saveIssueWorkflow(event) {
+    event.preventDefault()
+    try {
+      const response = await apiFetch(`/api/issues/${encodeURIComponent(selectedIssue.issue.cluster_id)}/workflow`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(workflowForm),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'Could not update issue status')
+      setSelectedIssue({ ...selectedIssue, issue: { ...selectedIssue.issue, workflow: result } })
+      setNotice('Issue follow-up saved')
+    } catch (error) {
+      setNotice(error.message)
+    }
+  }
+
+  async function downloadReport() {
+    try {
+      const response = await apiFetch('/api/analytics/report.csv')
+      if (!response.ok) throw new Error('Could not download the report')
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'complaint-compass-report.csv'
+      link.click()
+      URL.revokeObjectURL(url)
     } catch (error) {
       setNotice(error.message)
     }
   }
 
   const pageTitle = view === 'customers' ? 'Customers' : view === 'complaints' ? 'Complaints' : view === 'issues' ? 'Issues' : view === 'analytics' ? 'Analytics' : view === 'reports' ? 'Reports' : 'Overview'
+
+  if (accessRequired) return <main className="access-screen"><form className="access-card" onSubmit={async (event) => { event.preventDefault(); window.sessionStorage.setItem('workspace-access-token', accessToken.trim()); await loadData() }}><span className="brand-mark"><Icon name="compass" size={19} /></span><h1>Complaint Compass</h1><p>{accessMessage}</p><label>Workspace access token<input type="password" autoComplete="current-password" required value={accessToken} onChange={(event) => setAccessToken(event.target.value)} /></label><button className="button-primary" type="submit">Open workspace</button></form></main>
 
   return <main className="app-shell min-h-screen flex">
     <aside className="sidebar">
@@ -191,7 +263,7 @@ function App() {
     </aside>
 
     <section className="main-panel">
-      <header className="topbar"><span>Workspace <b>/</b> {pageTitle}</span><div className={`api-status ${api}`}><i />{api === 'online' ? 'Connected' : api === 'checking' ? 'Connecting' : 'API offline'}</div></header>
+      <header className="topbar"><span>Workspace <b>/</b> {pageTitle}</span><div className="topbar-actions"><div className={`api-status ${api}`}><i />{api === 'online' ? 'Connected' : api === 'checking' ? 'Connecting' : 'API offline'}</div>{window.sessionStorage.getItem('workspace-access-token') && <button className="button-secondary signout-button" onClick={() => { window.sessionStorage.removeItem('workspace-access-token'); setAccessToken(''); setAccessMessage('Workspace locked. Enter the access token to continue.'); setAccessRequired(true) }}>Lock workspace</button>}</div></header>
       <div className="content">
         <div className="welcome-row"><div><p className="eyebrow">Customer support intake</p><h1>{view === 'overview' ? 'Complaint desk' : pageTitle}</h1><p className="subtitle">{view === 'overview' ? 'Every report in one place, ready to understand.' : view === 'complaints' ? demoMode ? 'Browse the sample reports included in this read-only demo.' : 'Review reports and capture new customer issues.' : view === 'issues' ? 'Explore complaint clusters and their priority scores.' : view === 'analytics' ? 'Track complaint volume and compare customer segments.' : view === 'reports' ? 'Export the latest complaint and issue intelligence.' : 'Customer profiles and the issues they have reported.'}</p>{demoMode && <p className="demo-notice">Public demo · synthetic sample data · read-only</p>}</div>{!demoMode && <div className="header-actions"><button className="button-secondary" onClick={() => fileInput.current?.click()}><Icon name="upload" size={16} />Upload CSV</button><button className="button-primary" onClick={openForm}><Icon name="plus" size={16} />Add complaint</button><input ref={fileInput} className="visually-hidden" type="file" accept=".csv,text/csv" onChange={uploadFile} /></div>}</div>
 
@@ -229,25 +301,29 @@ function App() {
           <section className="panel segment-panel"><div className="panel-heading panel-heading-wrap"><div><h2>Customer intelligence</h2><p>{filteredSegments.length} of {segments.length} customer profiles match</p></div><button className="button-secondary" onClick={() => setSegmentFilters({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' })}>Clear filters</button></div><div className="segment-filters">{[['country','Country'],['state','State / region'],['age_group','Age group'],['student_status','Student status'],['income_bracket','Income bracket']].map(([key,label]) => <label key={key}>{label}<select value={segmentFilters[key]} onChange={(event) => setSegmentFilters({ ...segmentFilters, [key]: event.target.value })}><option value="">All</option>{(segmentOptions[key] || []).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}</div><div className="table-scroll"><table><thead><tr><th>Customer</th><th>Country</th><th>State / region</th><th>Age group</th><th>Student</th><th>Income bracket</th><th>Reports</th></tr></thead><tbody>{filteredSegments.slice(0, 100).map((customer) => <tr key={customer.customer_id}><td><strong className="row-id">{customer.customer_id}</strong></td><td>{customer.country || '—'}</td><td>{customer.state || '—'}</td><td>{customer.age_group || '—'}</td><td>{customer.student_status || '—'}</td><td>{customer.income_bracket || '—'}</td><td>{customer.complaint_count}</td></tr>)}</tbody></table></div>{!filteredSegments.length && <p className="panel-empty">No customer profiles match these filters.</p>}</section>
         </>}
 
-        {view === 'reports' && <section className="panel report-panel"><div className="panel-heading"><div><h2>Complaint report</h2><p>Export the current workspace data, including issue labels and priority scores.</p></div></div><div className="report-actions"><a className="button-primary" href="/api/analytics/report.csv" download><Icon name="upload" size={16} />Download CSV</a><button className="button-secondary" onClick={() => window.print()}>Print / Save as PDF</button></div><div className="report-preview"><div><span>Complaints</span><strong>{overview.complaint_count.toLocaleString()}</strong></div><div><span>Customer profiles</span><strong>{overview.customer_count.toLocaleString()}</strong></div><div><span>Prioritized issues</span><strong>{issueData.total_issues.toLocaleString()}</strong></div><div><span>Repeat submissions</span><strong>{issueData.duplicate_submissions.toLocaleString()}</strong></div></div><div className="panel-heading"><div><h2>Highest priority issues</h2><p>Included in the on-screen PDF print preview</p></div></div><div className="table-scroll"><table><thead><tr><th>Issue</th><th>Priority</th><th>Customers</th><th>Unique reports</th></tr></thead><tbody>{issueData.items.slice(0, 10).map((issue) => <tr key={issue.cluster_id}><td>{issue.label}</td><td>{Number(issue.priority_score).toFixed(1)}</td><td>{issue.affected_customers}</td><td>{issue.complaint_count}</td></tr>)}</tbody></table></div></section>}
+        {view === 'reports' && <section className="panel report-panel"><div className="panel-heading"><div><h2>Complaint report</h2><p>Export the current workspace data, including issue labels and priority scores.</p></div></div><div className="report-actions"><button className="button-primary" onClick={downloadReport}><Icon name="upload" size={16} />Download CSV</button><button className="button-secondary" onClick={() => window.print()}>Print / Save as PDF</button></div><div className="report-preview"><div><span>Complaints</span><strong>{overview.complaint_count.toLocaleString()}</strong></div><div><span>Customer profiles</span><strong>{overview.customer_count.toLocaleString()}</strong></div><div><span>Prioritized issues</span><strong>{issueData.total_issues.toLocaleString()}</strong></div><div><span>Repeat submissions</span><strong>{issueData.duplicate_submissions.toLocaleString()}</strong></div></div><div className="panel-heading"><div><h2>Highest priority issues</h2><p>Included in the on-screen PDF print preview</p></div></div><div className="table-scroll"><table><thead><tr><th>Issue</th><th>Priority</th><th>Customers</th><th>Unique reports</th></tr></thead><tbody>{issueData.items.slice(0, 10).map((issue) => <tr key={issue.cluster_id}><td>{issue.label}</td><td>{Number(issue.priority_score).toFixed(1)}</td><td>{issue.affected_customers}</td><td>{issue.complaint_count}</td></tr>)}</tbody></table></div></section>}
 
         {view === 'complaints' && <section className="panel data-panel">
-          <div className="panel-heading panel-heading-wrap"><div><h2>All complaints</h2><p>{complaints.length} shown · {overview.complaint_count} total reports</p></div><div className="table-filters"><label className="search-box"><Icon name="search" size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search complaints" /></label><select value={channel} onChange={(event) => setChannel(event.target.value)} aria-label="Filter by channel"><option value="">All channels</option><option value="email">Email</option><option value="voice">Voice calls</option><option value="chatbot">Chatbot</option><option value="social">Social media</option><option value="web">Web</option><option value="other">Other</option></select><select value={severity} onChange={(event) => setSeverity(event.target.value)} aria-label="Filter by severity"><option value="">All severity</option><option value="5">Critical</option><option value="4">High</option><option value="3">Medium</option><option value="2">Low</option><option value="1">Minor</option></select></div></div>
+          <div className="panel-heading panel-heading-wrap"><div><h2>All complaints</h2><p>{complaintTotal ? `${complaintOffset + 1}–${complaintOffset + complaints.length} of ${complaintTotal} reports` : 'No matching reports'}</p></div><div className="table-filters"><label className="search-box"><Icon name="search" size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search complaints" /></label><select value={channel} onChange={(event) => setChannel(event.target.value)} aria-label="Filter by channel"><option value="">All channels</option><option value="email">Email</option><option value="voice">Voice calls</option><option value="chatbot">Chatbot</option><option value="social">Social media</option><option value="web">Web</option><option value="other">Other</option></select><select value={severity} onChange={(event) => setSeverity(event.target.value)} aria-label="Filter by severity"><option value="">All severity</option><option value="5">Critical</option><option value="4">High</option><option value="3">Medium</option><option value="2">Low</option><option value="1">Minor</option></select></div></div>
           <ComplaintTable items={complaints} emptyText="No complaints match these filters." />
+          {complaintTotal > 100 && <div className="pagination"><button className="button-secondary" disabled={complaintOffset === 0} onClick={() => setComplaintOffset(Math.max(0, complaintOffset - 100))}>Previous</button><span>Page {Math.floor(complaintOffset / 100) + 1} of {Math.ceil(complaintTotal / 100)}</span><button className="button-secondary" disabled={complaintOffset + 100 >= complaintTotal} onClick={() => setComplaintOffset(complaintOffset + 100)}>Next</button></div>}
         </section>}
 
         {view === 'issues' && <section className="panel data-panel issues-view">
           <div className="panel-heading panel-heading-wrap"><div><h2>{selectedIssue ? selectedIssue.issue.label : 'Top 10 prioritized issues'}</h2><p>{selectedIssue ? selectedIssue.issue.representative_text : 'Ranked by severity, unique report frequency, and affected customers.'}</p></div><div className="issue-actions">{selectedIssue && <button className="button-secondary" onClick={() => setSelectedIssue(null)}>All issues</button>}{!demoMode && <button className="button-primary" onClick={runAnalysis} disabled={analyzing || overview.complaint_count === 0}><Icon name="route" size={16} />{analyzing ? 'Analyzing…' : 'Analyze complaints'}</button>}</div></div>
-          {!selectedIssue && <div className="issue-filter-bar"><div className="issue-filter-heading"><strong>Compare customer groups</strong><span>Rankings recalculate for customers matching these filters.</span></div><div className="issue-filter-controls">{[['country','Country'],['state','State / region'],['age_group','Age group'],['student_status','Student status'],['income_bracket','Income bracket']].map(([key, label]) => <label key={key}>{label}<select value={issueFilters[key]} onChange={(event) => { setIssueFilters({ ...issueFilters, [key]: event.target.value }); setSelectedIssue(null) }}><option value="">All customers</option>{(segmentOptions[key] || []).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}<button className="button-secondary" onClick={() => { setIssueFilters({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' }); setSelectedIssue(null) }}>Clear</button></div></div>}
+          {!selectedIssue && <div className="issue-filter-bar"><div className="issue-filter-heading"><strong>Compare customer groups</strong><span>Filter a cohort, then compare its rankings with all customers.</span></div><div className="issue-filter-controls">{[['country','Country'],['state','State / region'],['age_group','Age group'],['student_status','Student status'],['income_bracket','Income bracket']].map(([key, label]) => <label key={key}>{label}<select value={issueFilters[key]} onChange={(event) => { setIssueFilters({ ...issueFilters, [key]: event.target.value }); setSelectedIssue(null); setComparisonData(null) }}><option value="">All customers</option>{(segmentOptions[key] || []).map((option) => <option key={option} value={option}>{option}</option>)}</select></label>)}<button className="button-secondary" onClick={() => { setIssueFilters({ country: '', state: '', age_group: '', student_status: '', income_bracket: '' }); setSelectedIssue(null); setComparisonData(null) }}>Clear</button><button className="button-secondary" onClick={compareWithAllCustomers}>Compare with everyone</button></div></div>}
+          {!selectedIssue && comparisonData && <div className="cohort-compare"><h3>Priority comparison</h3><p>Selected cohort versus all customers, using the same analysis run.</p><div className="table-scroll"><table><thead><tr><th>Issue</th><th>Selected priority</th><th>Selected customers</th><th>All priority</th><th>All customers</th></tr></thead><tbody>{[...new Set([...issueData.items.map((item) => item.label), ...comparisonData.items.map((item) => item.label)])].map((label) => { const selected = issueData.items.find((item) => item.label === label); const all = comparisonData.items.find((item) => item.label === label); return <tr key={label}><td>{label}</td><td>{selected ? Number(selected.priority_score).toFixed(1) : '—'}</td><td>{selected?.affected_customers ?? 0}</td><td>{all ? Number(all.priority_score).toFixed(1) : '—'}</td><td>{all?.affected_customers ?? 0}</td></tr> })}</tbody></table></div></div>}
+          {issueData.analysis_stale && <div className="stale-analysis">{issueData.new_since_analysis} new complaint{issueData.new_since_analysis === 1 ? '' : 's'} since the last analysis. Run analysis to refresh issue groups and rankings.</div>}
           <details className="score-method"><summary>How priority is calculated</summary><p><strong>Priority = 0.4S + 0.3F + 0.3I</strong>, rounded to two decimals. S maps average severity from 1–5 to 0–100. F maps unique reports and I maps affected customers relative to the largest value in this analysis run. Repeat submissions are excluded from unique report frequency.</p></details>
           {selectedIssue ? <>
             <div className="issue-summary"><span><strong>{Number(selectedIssue.issue.priority_score).toFixed(1)}</strong> priority score</span><span><strong>{selectedIssue.issue.affected_customers}</strong> affected customers</span><span><strong>{selectedIssue.issue.complaint_count}</strong> unique reports</span><span><strong>{selectedIssue.issue.duplicate_count}</strong> repeat submissions linked</span></div>
             <div className="score-components"><div><span>Severity · 40%</span><strong>{Number(selectedIssue.issue.severity_score).toFixed(1)}</strong></div><div><span>Frequency · 30%</span><strong>{Number(selectedIssue.issue.frequency_score).toFixed(1)}</strong></div><div><span>Customer impact · 30%</span><strong>{Number(selectedIssue.issue.impact_score).toFixed(1)}</strong></div><div><span>Average severity</span><strong>{selectedIssue.issue.average_severity} / 5</strong></div></div>
+            <form className="workflow-editor" onSubmit={saveIssueWorkflow}><div><h3>Follow-up</h3><p>Track ownership and resolution across analysis runs.</p></div><label>Status<select disabled={demoMode} value={workflowForm.status} onChange={(event) => setWorkflowForm({ ...workflowForm, status: event.target.value })}><option value="open">Open</option><option value="investigating">Investigating</option><option value="resolved">Resolved</option></select></label><label>Owner<input disabled={demoMode} maxLength="100" value={workflowForm.owner} onChange={(event) => setWorkflowForm({ ...workflowForm, owner: event.target.value })} placeholder="Team or person" /></label><label className="workflow-notes">Notes<textarea disabled={demoMode} maxLength="4000" rows="2" value={workflowForm.notes} onChange={(event) => setWorkflowForm({ ...workflowForm, notes: event.target.value })} placeholder="Investigation or resolution notes" /></label>{!demoMode && <button className="button-primary" type="submit">Save follow-up</button>}</form>
             <div className="issue-evidence"><h3>Reports in this issue</h3>{selectedIssue.complaints.map((item) => <article className="evidence-row" key={item.complaint_id}><span className="route-mark"><Icon name="route" size={14} /></span><div><strong>{item.complaint_text}</strong><small>{item.complaint_id} · {item.customer_id || 'Customer unknown'} · {item.channel}</small></div>{item.duplicate_of && <span className="duplicate-tag">Repeat of {item.duplicate_of}</span>}</article>)}</div>
           </> : issueData.items.length ? <>
             {issueData.latest_analysis && <div className="analysis-note">Last run {new Date(issueData.latest_analysis.created_at).toLocaleString()} · {issueData.latest_analysis.embedding_model} · {issueData.latest_analysis.clustering_method}{issueData.latest_analysis.label_model ? ` · labels via ${issueData.latest_analysis.label_model}` : ' · labels via local keywords'}</div>}
             <div className="issue-summary"><span><strong>{issueData.total_issues}</strong> issues found</span><span><strong>{issueData.matched_customers}</strong> customers in group</span><span><strong>{issueData.duplicate_submissions}</strong> repeat submissions linked</span><span><strong>{issueData.unclustered_count}</strong> unclustered reports</span></div>
-            <div className="issue-list">{issueData.items.map((issue) => <button className="issue-row" key={issue.cluster_id} onClick={() => openIssue(issue)}><span className="issue-route"><Icon name="route" size={17} /></span><span className="issue-name"><strong>{issue.label}</strong><small>{issue.representative_text}</small></span><span className="issue-stat priority-stat"><strong>{Number(issue.priority_score).toFixed(1)}</strong><small>priority</small></span><span className="issue-stat"><strong>{issue.affected_customers}</strong><small>customers</small></span><span className="issue-stat"><strong>{issue.complaint_count}</strong><small>unique</small></span><span className="issue-stat"><strong>{issue.duplicate_count}</strong><small>repeats</small></span><Icon name="arrow" size={16} /></button>)}</div>
+            <div className="issue-list">{issueData.items.map((issue) => <button className="issue-row" key={issue.cluster_id} onClick={() => openIssue(issue)}><span className="issue-route"><Icon name="route" size={17} /></span><span className="issue-name"><strong>{issue.label}</strong><small>{issue.representative_text} · {issue.workflow?.status || 'open'}</small></span><span className="issue-stat priority-stat"><strong>{Number(issue.priority_score).toFixed(1)}</strong><small>priority</small></span><span className="issue-stat"><strong>{issue.affected_customers}</strong><small>customers</small></span><span className="issue-stat"><strong>{issue.complaint_count}</strong><small>unique</small></span><span className="issue-stat"><strong>{issue.duplicate_count}</strong><small>repeats</small></span><Icon name="arrow" size={16} /></button>)}</div>
           </> : <EmptyState title={overview.complaint_count ? 'Run analysis to find recurring issues' : 'Add complaints before analyzing'} text={overview.complaint_count ? 'The local embedding model will compare complaint meaning, cluster related reports, and link likely repeat submissions from the same customer.' : 'Upload the sample dataset or add customer reports, then run analysis to discover issue groups.'} />}
         </section>}
 
@@ -267,7 +343,7 @@ function App() {
 
 function ComplaintTable({ items, emptyText }) {
   if (!items.length) return <EmptyState title="No complaints yet" text={emptyText} />
-  return <div className="table-scroll"><table><thead><tr><th>Complaint</th><th>Customer</th><th>Source</th><th>Severity</th><th>Issue link</th><th>Received</th></tr></thead><tbody>{items.map((item) => <tr key={item.complaint_id}><td><div className="complaint-cell"><span className="route-mark"><Icon name="route" size={14} /></span><div><strong>{item.complaint_text}</strong><small>{item.complaint_id}</small></div></div></td><td>{item.customer_id || '—'}</td><td><span className="source-label"><span className="source-dot" />{item.channel}</span></td><td><span className={`severity severity-${item.severity}`}>{['', 'Minor', 'Low', 'Medium', 'High', 'Critical'][item.severity]}</span></td><td className="issue-link-cell">{item.duplicate_of ? <span className="duplicate-tag">Repeat of {item.duplicate_of}</span> : item.issue_label || '—'}</td><td>{new Date(item.submitted_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</td></tr>)}</tbody></table></div>
+  return <div className="table-scroll"><table><thead><tr><th>Complaint</th><th>Customer</th><th>Source</th><th>Severity</th><th>Issue link</th><th>Received</th></tr></thead><tbody>{items.map((item) => <tr key={item.complaint_id}><td><div className="complaint-cell"><span className="route-mark"><Icon name="route" size={14} /></span><div><strong>{item.complaint_text}</strong><small>{item.complaint_id}</small></div></div></td><td>{item.customer_id || '—'}</td><td><span className="source-label"><span className="source-dot" />{item.channel}</span></td><td><span title={item.severity_source === 'default' ? 'Severity was not provided; medium is assumed.' : 'Severity supplied with the complaint.'} className={`severity severity-${item.severity}`}>{['', 'Minor', 'Low', 'Medium', 'High', 'Critical'][item.severity]}{item.severity_source === 'default' ? ' · assumed' : ''}</span></td><td className="issue-link-cell">{item.duplicate_of ? <span className="duplicate-tag">Repeat of {item.duplicate_of}</span> : item.issue_label || '—'}</td><td>{new Date(item.submitted_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</td></tr>)}</tbody></table></div>
 }
 
 function EmptyState({ title, text }) {

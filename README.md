@@ -17,7 +17,7 @@ Customer complaint intake and intelligence platform.
 | Charts | Recharts |
 | Deployment | Vercel + Render |
 
-The app uses React + Vite, Tailwind CSS, FastAPI, and a database adapter that selects PostgreSQL when `DATABASE_URL` is set or SQLite locally. Complaint analysis uses Sentence Transformers (`all-MiniLM-L6-v2`), HDBSCAN from scikit-learn, and optional local Ollama/Qwen2.5 naming. The hosted workspace accepts complaint writes and authenticated channel webhooks; use synthetic or approved data until user authentication and operational controls are in place.
+The app uses React + Vite, Tailwind CSS, FastAPI, and a database adapter that selects PostgreSQL when `DATABASE_URL` is set or SQLite locally. Complaint analysis uses Sentence Transformers (`all-MiniLM-L6-v2`), HDBSCAN from scikit-learn, and optional local Ollama/Qwen2.5 naming. Production workspace/API access uses a workspace token; channel webhooks use their own token.
 
 ## Requirements
 
@@ -62,7 +62,7 @@ Each analysis run records the transparent score `Priority = 0.4S + 0.3F + 0.3I`.
 
 ## Current scope
 
-Phases 1–6 are in place: local SQLite or Supabase PostgreSQL, complaint intake, customer profiles, CSV validation, semantic embeddings, HDBSCAN issue groups, same-customer repeat linking, readable labels, transparent issue prioritization, complaint trends, customer segment filters, emerging issue summaries, CSV / print-to-PDF reporting, and database compatibility views. Trained classification and production deployment remain future work.
+Current capabilities include local SQLite or Supabase PostgreSQL, complaint intake, customer profiles, CSV validation, semantic embeddings, HDBSCAN issue groups, cross-channel repeat linking when providers supply a verified shared customer ID, readable labels, transparent issue prioritization, complaint trends, demographic filters with cohort-to-workspace comparisons, emerging issue summaries, CSV / print-to-PDF reporting, issue owner/status/notes, staleness notices, and database compatibility views. Production API access uses a shared workspace token. Trained severity classification, provider account configuration, per-user roles, and multi-organization isolation remain future work.
 
 ## Run checks
 
@@ -77,12 +77,12 @@ The backend checks cover CSV encodings, headers, delimiters and row validation; 
 
 ## Public demo deployment
 
-The included `render.yaml` creates a free, writable Render API service with Sentence Transformers and `sentence-transformers/all-MiniLM-L6-v2` available for analysis. Set its `DATABASE_URL` to a dedicated Supabase project and `INTAKE_WEBHOOK_TOKEN` to a long random secret. The first analysis downloads the model; Render's temporary filesystem may require another download after a service restart. The hosted workspace is publicly writable; do not point it at a database containing real customer records.
+The included `render.yaml` creates a Render API service with Sentence Transformers and `sentence-transformers/all-MiniLM-L6-v2` available for analysis. Set `DATABASE_URL`, `INTAKE_WEBHOOK_TOKEN`, and `WORKSPACE_ACCESS_TOKEN` in Render's secret settings. Use different long random values for workspace access and webhook intake. If workspace authentication is enabled without its token, protected API routes fail closed with HTTP 503. The first analysis downloads the model; Render's temporary filesystem may require another download after a service restart.
 
-1. In Render, create a Blueprint from this repository using `render.yaml`. Set its `DATABASE_URL` to the Supabase pooler URI. The health check is `/api/health`.
+1. In Render, create a Blueprint from this repository using `render.yaml`. Set its `DATABASE_URL` to the Supabase pooler URI and configure different long random values for `INTAKE_WEBHOOK_TOKEN` and `WORKSPACE_ACCESS_TOKEN`. The health check is `/api/health`.
 2. Before making the API public, run `python -m backend.seed_demo` once from the repository root with `backend/.env` pointing to the dedicated demo Supabase project. This loads the six synthetic complaints and computes the initial analysis. The script refuses to seed unrelated complaint records.
 3. In Vercel, import the same repository and set the project root to `frontend`. Add `VITE_API_BASE_URL` with the Render service URL, for example `https://complaint-compass-demo-api.onrender.com`, then deploy or redeploy after setting it.
 
-The app uses same-origin relative `/api` requests locally through the Vite proxy. `VITE_API_BASE_URL` switches those calls to the hosted API. Set `VITE_DEMO_MODE=false` in Vercel so upload and complaint creation controls are visible; Render uses `DEMO_MODE=false` to accept writes.
+The app uses same-origin relative `/api` requests locally through the Vite proxy. `VITE_API_BASE_URL` switches those calls to the hosted API. Render uses `DEMO_MODE=false` to accept writes and requires `WORKSPACE_ACCESS_TOKEN` for dashboard and API access; the frontend presents a token prompt. `VITE_DEMO_MODE` only controls initial UI state; the API health response sets the final mode.
 
 The free Render API sleeps after 15 minutes without traffic and can take about a minute to wake. This is suitable for a competition or portfolio demo, but expect a delay on the first visit after idle time.

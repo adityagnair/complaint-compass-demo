@@ -34,6 +34,8 @@ class ComplaintCreate(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     severity: int = Field(default=3, ge=1, le=5)
     customer: CustomerFields = Field(default_factory=CustomerFields)
+    customer_aliases: list[str] = Field(default_factory=list, max_length=10)
+    customer_identity_verified: bool = False
 
     @field_validator("complaint_id", "customer_id", mode="before")
     @classmethod
@@ -61,3 +63,9 @@ class AnalysisRequest(BaseModel):
     min_cluster_size: int = Field(default=2, ge=2, le=20)
     duplicate_similarity_threshold: float = Field(default=0.92, ge=0.75, le=0.99)
     duplicate_window_days: int = Field(default=30, ge=1, le=180)
+
+
+class IssueWorkflowUpdate(BaseModel):
+    status: Literal["open", "investigating", "resolved"] = "open"
+    owner: str | None = Field(default=None, max_length=100)
+    notes: str = Field(default="", max_length=4000)

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import hmac
 import os
 
 from fastapi import FastAPI, Request
@@ -23,6 +24,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Complaint Compass API", version="0.2.0", lifespan=lifespan)
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in {"1", "true", "yes", "on"}
+WORKSPACE_AUTH_ENABLED = os.getenv("WORKSPACE_AUTH_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 allowed_origins = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
@@ -39,6 +41,19 @@ app.add_middleware(
 
 @app.middleware("http")
 async def public_demo_read_only(request: Request, call_next):
+    path = request.url.path
+    is_public_health = path == "/api/health"
+    is_webhook = path == "/api/intake" or path.startswith("/api/intake/")
+    workspace_token = os.getenv("WORKSPACE_ACCESS_TOKEN", "").strip()
+    if path.startswith("/api/") and not is_public_health and not is_webhook and request.method != "OPTIONS" and WORKSPACE_AUTH_ENABLED and not DEMO_MODE:
+        if not workspace_token:
+            return JSONResponse(status_code=503, content={"detail": "Workspace access is not configured."})
+        supplied = request.headers.get("X-Workspace-Token", "")
+        authorization = request.headers.get("Authorization", "")
+        if authorization.lower().startswith("bearer "):
+            supplied = authorization[7:].strip()
+        if not supplied or not hmac.compare_digest(supplied, workspace_token):
+            return JSONResponse(status_code=401, content={"detail": "Workspace access is required."})
     if DEMO_MODE and request.url.path.startswith("/api/") and request.method not in {"GET", "HEAD", "OPTIONS"}:
         return JSONResponse(status_code=403, content={"detail": "This public demo is read-only."})
     return await call_next(request)

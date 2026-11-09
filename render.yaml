@@ -13,6 +13,8 @@ services:
         sync: false
       - key: DEMO_MODE
         value: "false"
+      - key: WORKSPACE_AUTH_ENABLED
+        value: "true"
       - key: CORS_ALLOWED_ORIGINS
         value: "https://complaint-compass-demo.vercel.app"
       - key: OLLAMA_LABELS
@@ -20,4 +22,6 @@ services:
       - key: EMBEDDING_MODEL
         value: "sentence-transformers/all-MiniLM-L6-v2"
       - key: INTAKE_WEBHOOK_TOKEN
+        sync: false
+      - key: WORKSPACE_ACCESS_TOKEN
         sync: false

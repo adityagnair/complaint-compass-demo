@@ -71,9 +71,9 @@ def row_to_complaint(row: dict[str, str], line_number: int) -> ComplaintCreate:
         raise ValueError("complaint_text (or Complaint/description) is required")
     channel_input = values.get("channel", "other").strip().lower()
     channel = CHANNELS.get(channel_input, "other")
-    severity_input = values.get("severity", "3").strip().lower()
+    severity_input = values.get("severity", "").strip().lower()
     if not severity_input:
-        severity = 3
+        severity = None
     elif severity_input.isdigit():
         severity = int(severity_input)
     elif severity_input in SEVERITY_LABELS:
@@ -88,15 +88,17 @@ def row_to_complaint(row: dict[str, str], line_number: int) -> ComplaintCreate:
         income_bracket=values.get("income_bracket") or None,
     )
     try:
-        return ComplaintCreate(
+        complaint_values = dict(
             complaint_id=values["complaint_id"],
             customer_id=values.get("customer_id") or None,
             complaint_text=values["complaint_text"],
             channel=channel,
             timestamp=parse_timestamp(values.get("timestamp")),
-            severity=severity,
             customer=customer,
         )
+        if severity is not None:
+            complaint_values["severity"] = severity
+        return ComplaintCreate(**complaint_values)
     except ValidationError as exc:
         details = "; ".join(f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors())
         raise ValueError(details) from exc

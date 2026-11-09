@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.database import database
+from backend.models.schemas import IssueWorkflowUpdate
+from backend.services.issue_workflow import issue_key, workflow_for_label
 from backend.services.prioritization import score_issues
 
 router = APIRouter(prefix="/api/issues", tags=["issues"])
@@ -21,7 +23,8 @@ def list_issues(
             "SELECT * FROM analysis_runs ORDER BY created_at DESC, run_id DESC LIMIT 1"
         ).fetchone()
         if latest_run is None:
-            return {"latest_analysis": None, "items": [], "total_issues": 0, "unclustered_count": 0, "duplicate_submissions": 0}
+            total_reports = connection.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]
+            return {"latest_analysis": None, "items": [], "total_issues": 0, "unclustered_count": total_reports, "duplicate_submissions": 0, "analysis_stale": total_reports > 0, "new_since_analysis": total_reports}
         clusters = connection.execute(
             "SELECT * FROM issue_clusters WHERE run_id = ? ORDER BY label", (latest_run["run_id"],)
         ).fetchall()
@@ -67,6 +70,7 @@ def list_issues(
             item["affected_customers"] = len({row["customer_id"] for row in primary if row["customer_id"]})
             item["average_severity"] = round(sum(row["severity"] for row in primary) / len(primary), 2)
             items.append(item)
+            item["workflow"] = workflow_for_label(connection, item["label"])
         score_issues(items)
         items.sort(key=lambda item: (-item["priority_score"], -item["affected_customers"], -item["complaint_count"]))
         total_issues = len(items)
@@ -83,6 +87,8 @@ def list_issues(
             + (f" AND {cohort_where}" if cohort_where else ""),
             filter_params,
         ).fetchone()[0]
+        total_reports = connection.execute("SELECT COUNT(*) FROM complaints").fetchone()[0]
+        new_since_analysis = max(0, total_reports - int(latest_run["complaints_processed"]))
     return {
         "latest_analysis": dict(latest_run),
         "items": items[:limit],
@@ -91,6 +97,8 @@ def list_issues(
         "duplicate_submissions": duplicates,
         "matched_customers": matched_customers,
         "filters": {key: value for key, value in filter_values.items() if value},
+        "analysis_stale": new_since_analysis > 0,
+        "new_since_analysis": new_since_analysis,
     }
 
 
@@ -124,4 +132,23 @@ def get_issue(
                WHERE """ + " AND ".join(conditions) + " ORDER BY complaints.submitted_at ASC",
             values,
         ).fetchall()
-    return {"issue": dict(issue), "complaints": [dict(row) for row in complaints]}
+        workflow = workflow_for_label(connection, issue["label"])
+    return {"issue": {**dict(issue), "workflow": workflow}, "complaints": [dict(row) for row in complaints]}
+
+
+@router.patch("/{cluster_id}/workflow")
+def update_issue_workflow(cluster_id: str, update: IssueWorkflowUpdate):
+    with database() as connection:
+        issue = connection.execute("SELECT label FROM issue_clusters WHERE cluster_id = ?", (cluster_id,)).fetchone()
+        if issue is None:
+            raise HTTPException(status_code=404, detail="Issue cluster not found")
+        key = issue_key(issue["label"])
+        connection.execute(
+            """INSERT INTO issue_work_items (issue_key, status, owner, notes, updated_at)
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(issue_key) DO UPDATE SET status = excluded.status,
+                 owner = excluded.owner, notes = excluded.notes, updated_at = CURRENT_TIMESTAMP""",
+            (key, update.status, update.owner.strip() if update.owner else None, update.notes.strip()),
+        )
+        workflow = workflow_for_label(connection, issue["label"])
+    return workflow

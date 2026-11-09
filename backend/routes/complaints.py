@@ -24,9 +24,32 @@ def upsert_customer(connection, customer_id: str, fields) -> None:
 def insert_complaint(connection, complaint: ComplaintCreate) -> bool:
     if complaint.customer_id:
         upsert_customer(connection, complaint.customer_id, complaint.customer)
+        for alias in complaint.customer_aliases:
+            if alias and alias != complaint.customer_id:
+                existing = connection.execute("SELECT customer_id FROM customer_aliases WHERE alias_value = ?", (alias[:220],)).fetchone()
+                if existing and existing["customer_id"] != complaint.customer_id and complaint.customer_identity_verified:
+                    old_id = existing["customer_id"]
+                    connection.execute(
+                        """UPDATE customers SET country = COALESCE(country, (SELECT country FROM customers WHERE customer_id = ?)),
+                             state = COALESCE(state, (SELECT state FROM customers WHERE customer_id = ?)),
+                             age_group = COALESCE(age_group, (SELECT age_group FROM customers WHERE customer_id = ?)),
+                             student_status = COALESCE(student_status, (SELECT student_status FROM customers WHERE customer_id = ?)),
+                             income_bracket = COALESCE(income_bracket, (SELECT income_bracket FROM customers WHERE customer_id = ?))
+                           WHERE customer_id = ?""",
+                        (old_id, old_id, old_id, old_id, old_id, complaint.customer_id),
+                    )
+                    connection.execute("UPDATE complaints SET customer_id = ? WHERE customer_id = ?", (complaint.customer_id, old_id))
+                    connection.execute("UPDATE customer_aliases SET customer_id = ? WHERE customer_id = ?", (complaint.customer_id, old_id))
+                    connection.execute("DELETE FROM customers WHERE customer_id = ?", (old_id,))
+                connection.execute(
+                    """INSERT INTO customer_aliases (alias_value, customer_id) VALUES (?, ?)
+                       ON CONFLICT(alias_value) DO UPDATE SET customer_id = excluded.customer_id
+                       WHERE ? = 1""",
+                    (alias[:220], complaint.customer_id, int(complaint.customer_identity_verified)),
+                )
     result = connection.execute(
-        """INSERT INTO complaints (complaint_id, customer_id, complaint_text, channel, submitted_at, severity)
-           VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(complaint_id) DO NOTHING""",
+        """INSERT INTO complaints (complaint_id, customer_id, complaint_text, channel, submitted_at, severity, severity_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(complaint_id) DO NOTHING""",
         (
             complaint.complaint_id,
             complaint.customer_id,
@@ -34,6 +57,7 @@ def insert_complaint(connection, complaint: ComplaintCreate) -> bool:
             complaint.channel,
             complaint.timestamp.isoformat(),
             complaint.severity,
+            "provided" if "severity" in complaint.model_fields_set else "default",
         ),
     )
     return result.rowcount > 0

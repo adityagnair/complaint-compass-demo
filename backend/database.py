@@ -140,8 +140,15 @@ def initialize_database() -> None:
             channel TEXT NOT NULL DEFAULT 'other',
             submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             severity INTEGER NOT NULL DEFAULT 3 CHECK (severity BETWEEN 1 AND 5),
+            severity_source TEXT NOT NULL DEFAULT 'default',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON UPDATE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS customer_aliases (
+            alias_value TEXT PRIMARY KEY,
+            customer_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON UPDATE CASCADE ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_complaints_customer ON complaints(customer_id);
         CREATE INDEX IF NOT EXISTS idx_complaints_submitted ON complaints(submitted_at);
@@ -155,6 +162,7 @@ def initialize_database() -> None:
                 ("embedding_model", "TEXT"),
                 ("issue_cluster_id", "TEXT"),
                 ("duplicate_of", "TEXT"),
+                ("severity_source", "TEXT NOT NULL DEFAULT 'default'"),
             ):
                 if column not in columns:
                     connection.execute(f"ALTER TABLE complaints ADD COLUMN {column} {data_type}")
@@ -171,6 +179,7 @@ def initialize_database() -> None:
                 ("embedding_model", "TEXT"),
                 ("issue_cluster_id", "TEXT"),
                 ("duplicate_of", "TEXT"),
+                ("severity_source", "TEXT NOT NULL DEFAULT 'default'"),
             ):
                 connection.execute(f"ALTER TABLE complaints ADD COLUMN IF NOT EXISTS {column} {data_type}")
         analysis_schema = """
@@ -207,6 +216,13 @@ def initialize_database() -> None:
             priority_score REAL NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (run_id) REFERENCES analysis_runs(run_id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS issue_work_items (
+            issue_key TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'open',
+            owner TEXT,
+            notes TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_complaints_cluster ON complaints(issue_cluster_id);
         CREATE INDEX IF NOT EXISTS idx_clusters_run ON issue_clusters(run_id);
