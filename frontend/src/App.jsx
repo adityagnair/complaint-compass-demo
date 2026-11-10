@@ -41,6 +41,7 @@ function Icon({ name, size = 18 }) {
 
 function App() {
   const [api, setApi] = useState('checking')
+  const [slowConnection, setSlowConnection] = useState(false)
   const [accessRequired, setAccessRequired] = useState(false)
   const [accessToken, setAccessToken] = useState('')
   const [accessMessage, setAccessMessage] = useState('')
@@ -67,9 +68,12 @@ function App() {
   const [form, setForm] = useState(null)
   const [saving, setSaving] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
+  const [issuesLoading, setIssuesLoading] = useState(false)
   const fileInput = useRef(null)
 
   const loadData = useCallback(async () => {
+    setSlowConnection(false)
+    setApi((current) => current === 'offline' ? 'checking' : current)
     try {
       const query = new URLSearchParams()
       if (search.trim()) query.set('search', search.trim())
@@ -112,6 +116,11 @@ function App() {
   }, [search, channel, severity, issueFilters, complaintOffset])
 
   useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    if (api !== 'checking') return undefined
+    const timer = window.setTimeout(() => setSlowConnection(true), 5000)
+    return () => window.clearTimeout(timer)
+  }, [api])
   useEffect(() => { setComplaintOffset(0) }, [search, channel, severity])
   useEffect(() => {
     if (!notice) return undefined
@@ -148,7 +157,9 @@ function App() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Could not save complaint')
       setForm(null)
-      setNotice('Complaint saved')
+      setNotice(result.analysis?.status === 'failed'
+        ? `Complaint saved · ${result.analysis.error}`
+        : 'Complaint saved')
       await loadData()
     } catch (error) {
       setNotice(error.message)
@@ -168,7 +179,8 @@ function App() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Upload failed')
       const firstError = result.errors?.[0]?.error
-      setNotice(`${result.added} added · ${result.skipped} skipped${firstError ? ` · ${firstError}` : ''}`)
+      const analysisError = result.analysis?.status === 'failed' ? ` · ${result.analysis.error}` : ''
+      setNotice(`${result.added} added · ${result.skipped} skipped${firstError ? ` · ${firstError}` : ''}${analysisError}`)
       await loadData()
     } catch (error) {
       setNotice(error.message)
@@ -191,6 +203,31 @@ function App() {
       setNotice(error.message)
     } finally {
       setAnalyzing(false)
+    }
+  }
+
+  async function loadPrioritizedIssues() {
+    setIssuesLoading(true)
+    if (api === 'offline') setApi('checking')
+    try {
+      const issueQuery = new URLSearchParams(Object.entries(issueFilters).filter(([, value]) => value))
+      const queryString = issueQuery.toString()
+      const response = await apiFetch(`/api/issues/top10${queryString ? `?${queryString}` : ''}`)
+      const result = await response.json()
+      if (response.status === 401 || response.status === 503) {
+        setAccessRequired(true)
+        setAccessMessage(result.detail || 'Enter the workspace access token to continue.')
+        setApi('offline')
+        return
+      }
+      if (!response.ok) throw new Error(result.detail || 'Could not load prioritized issues')
+      setIssueData(result)
+      setApi('online')
+    } catch (error) {
+      setApi('offline')
+      setNotice(error.message)
+    } finally {
+      setIssuesLoading(false)
     }
   }
 
@@ -263,7 +300,7 @@ function App() {
       <nav aria-label="Main navigation">
         <button className={`nav-item ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}><Icon name="overview" />Overview</button>
         <button className={`nav-item ${view === 'complaints' ? 'active' : ''}`} onClick={() => setView('complaints')}><Icon name="complaints" />Complaints<span className="nav-count">{overview.complaint_count}</span></button>
-        <button className={`nav-item ${view === 'issues' ? 'active' : ''}`} onClick={() => { setView('issues'); setSelectedIssue(null) }}><Icon name="route" />Issues<span className="nav-count">{issueData.items.length}</span></button>
+        <button className={`nav-item ${view === 'issues' ? 'active' : ''}`} aria-busy={issuesLoading} onClick={() => { setView('issues'); setSelectedIssue(null); loadPrioritizedIssues() }}><Icon name="route" />Issues<span className="nav-count">{issueData.items.length}</span></button>
         <button className={`nav-item ${view === 'customers' ? 'active' : ''}`} onClick={() => setView('customers')}><Icon name="customers" />Customers<span className="nav-count">{overview.customer_count}</span></button>
         <button className={`nav-item ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}><Icon name="overview" />Analytics</button>
         <button className={`nav-item ${view === 'reports' ? 'active' : ''}`} onClick={() => setView('reports')}><Icon name="complaints" />Reports</button>
@@ -272,7 +309,7 @@ function App() {
     </aside>
 
     <section className="main-panel">
-      <header className="topbar"><span>Workspace <b>/</b> {pageTitle}</span><div className="topbar-actions"><div className={`api-status ${api}`}><i />{api === 'online' ? 'Connected' : api === 'checking' ? 'Connecting' : 'API offline'}</div>{window.sessionStorage.getItem('workspace-access-token') && <button className="button-secondary signout-button" onClick={() => { window.sessionStorage.removeItem('workspace-access-token'); setAccessToken(''); setAccessMessage('Workspace locked. Enter the access token to continue.'); setAccessRequired(true) }}>Lock workspace</button>}</div></header>
+      <header className="topbar"><span>Workspace <b>/</b> {pageTitle}</span><div className="topbar-actions"><div className={`api-status ${api}`} title={api === 'checking' && slowConnection ? 'Render free services can take up to a minute to wake after inactivity.' : undefined}><i />{api === 'online' ? 'Connected' : api === 'checking' ? slowConnection ? 'Waking API…' : 'Connecting' : 'API offline'}</div>{window.sessionStorage.getItem('workspace-access-token') && <button className="button-secondary signout-button" onClick={() => { window.sessionStorage.removeItem('workspace-access-token'); setAccessToken(''); setAccessMessage('Workspace locked. Enter the access token to continue.'); setAccessRequired(true) }}>Lock workspace</button>}</div></header>
       <div className="content">
         <div className="welcome-row"><div><p className="eyebrow">Customer support intake</p><h1>{view === 'overview' ? 'Complaint desk' : pageTitle}</h1><p className="subtitle">{view === 'overview' ? 'Every report in one place, ready to understand.' : view === 'complaints' ? demoMode ? 'Browse the sample reports included in this read-only demo.' : 'Review reports and capture new customer issues.' : view === 'issues' ? 'Explore complaint clusters and their priority scores.' : view === 'analytics' ? 'Track complaint volume and compare customer segments.' : view === 'reports' ? 'Export the latest complaint and issue intelligence.' : 'Customer profiles and the issues they have reported.'}</p>{demoMode && <p className="demo-notice">Public demo · synthetic sample data · read-only</p>}</div>{!demoMode && <div className="header-actions"><button className="button-secondary" onClick={() => fileInput.current?.click()}><Icon name="upload" size={16} />Upload CSV</button><button className="button-primary" onClick={openForm}><Icon name="plus" size={16} />Add complaint</button><input ref={fileInput} className="visually-hidden" type="file" accept=".csv,text/csv" onChange={uploadFile} /></div>}</div>
 
