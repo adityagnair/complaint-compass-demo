@@ -2,6 +2,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from backend.database import database
 from backend.models.schemas import ComplaintCreate
+from backend.services.analysis import refresh_issue_analysis
 from backend.services.complaints import parse_csv
 
 router = APIRouter(prefix="/api/complaints", tags=["complaints"])
@@ -69,7 +70,11 @@ def create_complaint(complaint: ComplaintCreate):
         inserted = insert_complaint(connection, complaint)
     if not inserted:
         raise HTTPException(status_code=409, detail="complaint_id already exists")
-    return {"complaint_id": complaint.complaint_id, "status": "created"}
+    return {
+        "complaint_id": complaint.complaint_id,
+        "status": "created",
+        "analysis": refresh_issue_analysis(),
+    }
 
 
 @router.post("/upload")
@@ -89,7 +94,10 @@ async def upload_complaints(file: UploadFile = File(...)):
                 added += 1
             else:
                 errors.append({"row": str(line_number), "error": f"complaint_id {complaint.complaint_id} already exists"})
-    return {"filename": file.filename, "added": added, "skipped": len(errors), "errors": errors}
+    result = {"filename": file.filename, "added": added, "skipped": len(errors), "errors": errors}
+    if added:
+        result["analysis"] = refresh_issue_analysis()
+    return result
 
 
 @router.get("")

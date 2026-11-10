@@ -3,7 +3,11 @@ import io
 from pathlib import Path
 
 
-def test_upload_persists_customer_segments_and_csv_report(client):
+def test_upload_persists_customer_segments_and_csv_report(client, monkeypatch):
+    monkeypatch.setattr(
+        "backend.routes.complaints.refresh_issue_analysis",
+        lambda: {"status": "completed", "run_id": "test-run", "issues_found": 1, "complaints_processed": 2},
+    )
     content = (
         "complaint_id,customer_id,complaint_text,channel,severity,country,state,age_group,student_status,income_bracket\n"
         "C-1,U-1,Payment deducted twice,email,5,India,Delhi,18-24,yes,under-300000\n"
@@ -14,6 +18,7 @@ def test_upload_persists_customer_segments_and_csv_report(client):
     assert response.status_code == 200
     assert response.json()["added"] == 2
     assert response.json()["skipped"] == 0
+    assert response.json()["analysis"]["status"] == "completed"
 
     segments = client.get("/api/analytics/segments").json()
     assert segments["total"] == 2
@@ -25,6 +30,104 @@ def test_upload_persists_customer_segments_and_csv_report(client):
     assert report.status_code == 200
     assert {row["complaint_id"] for row in rows} == {"C-1", "C-2"}
     assert "complaint-compass-report.csv" in report.headers["content-disposition"]
+
+
+def test_new_complaint_runs_analysis_after_commit_but_duplicate_does_not(client, monkeypatch):
+    from backend.database import database
+
+    calls = []
+
+    def refresh():
+        with database() as connection:
+            calls.append(connection.execute("SELECT COUNT(*) FROM complaints").fetchone()[0])
+        return {"status": "completed", "run_id": "test-run", "issues_found": 1, "complaints_processed": calls[-1]}
+
+    monkeypatch.setattr("backend.routes.complaints.refresh_issue_analysis", refresh)
+    with database() as connection:
+        connection.execute(
+            "INSERT INTO complaints (complaint_id, complaint_text, channel) VALUES (?, ?, ?)",
+            ("EXISTING-1", "An older issue already in the workspace.", "email"),
+        )
+    complaint = {"complaint_id": "AUTO-1", "complaint_text": "My card was charged twice."}
+
+    created = client.post("/api/complaints", json=complaint)
+    duplicate = client.post("/api/complaints", json=complaint)
+
+    assert created.status_code == 201
+    assert created.json()["analysis"]["status"] == "completed"
+    assert created.json()["analysis"]["complaints_processed"] == 2
+    assert duplicate.status_code == 409
+    assert calls == [2]
+
+
+def test_csv_upload_runs_analysis_once_for_new_batch(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "backend.routes.complaints.refresh_issue_analysis",
+        lambda: calls.append("run") or {"status": "completed", "run_id": "test-run", "issues_found": 1, "complaints_processed": 2},
+    )
+    content = (
+        "complaint_id,complaint_text\n"
+        "AUTO-CSV-1,My refund is late.\n"
+        "AUTO-CSV-2,The app crashes at checkout.\n"
+    )
+
+    uploaded = client.post("/api/complaints/upload", files={"file": ("input.csv", content, "text/csv")})
+    duplicate_upload = client.post("/api/complaints/upload", files={"file": ("input.csv", content, "text/csv")})
+
+    assert uploaded.status_code == 200
+    assert uploaded.json()["added"] == 2
+    assert uploaded.json()["analysis"]["status"] == "completed"
+    assert duplicate_upload.status_code == 200
+    assert duplicate_upload.json()["added"] == 0
+    assert "analysis" not in duplicate_upload.json()
+    assert calls == ["run"]
+
+
+def test_intake_runs_analysis_for_new_event_but_not_duplicate(client, monkeypatch):
+    from backend.routes import intake
+
+    monkeypatch.setenv("INTAKE_WEBHOOK_TOKEN", "test-intake-secret")
+    calls = []
+    monkeypatch.setattr(
+        intake,
+        "refresh_issue_analysis",
+        lambda: calls.append("run") or {"status": "completed", "run_id": "test-run", "issues_found": 1, "complaints_processed": 1},
+    )
+    payload = {"message_id": "auto-analysis-1", "user_id": "customer-1", "message": "My payment failed twice."}
+    headers = {"X-Intake-Token": "test-intake-secret"}
+
+    accepted = client.post("/api/intake/chatbot", json=payload, headers=headers)
+    duplicate = client.post("/api/intake/chatbot", json=payload, headers=headers)
+
+    assert accepted.status_code == 202
+    assert accepted.json()["analysis"]["status"] == "completed"
+    assert duplicate.status_code == 202
+    assert duplicate.json()["status"] == "duplicate"
+    assert "analysis" not in duplicate.json()
+    assert calls == ["run"]
+
+
+def test_analysis_failure_is_reported_without_rolling_back_complaint(client, monkeypatch):
+    from backend.ai import pipeline
+    from backend.database import database
+
+    def fail_analysis():
+        raise RuntimeError("model service unavailable")
+
+    monkeypatch.setattr(pipeline, "run_analysis", fail_analysis)
+    response = client.post(
+        "/api/complaints",
+        json={"complaint_id": "AUTO-FAIL-1", "complaint_text": "My card was charged twice."},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["analysis"] == {
+        "status": "failed",
+        "error": "Automatic issue analysis failed; use Analyze complaints to retry.",
+    }
+    with database() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM complaints WHERE complaint_id = ?", ("AUTO-FAIL-1",)).fetchone()[0] == 1
 
 
 def test_documented_api_aliases_and_compatibility_views(client):
@@ -42,7 +145,15 @@ def test_documented_api_aliases_and_compatibility_views(client):
 
 
 def test_authenticated_channel_intake_normalizes_and_deduplicates_events(client, monkeypatch):
+    from backend.routes import intake
+
     monkeypatch.setenv("INTAKE_WEBHOOK_TOKEN", "test-intake-secret")
+    analyzed = []
+    monkeypatch.setattr(
+        intake,
+        "refresh_issue_analysis",
+        lambda: analyzed.append("run") or {"status": "completed", "run_id": "test-run", "issues_found": 1, "complaints_processed": len(analyzed)},
+    )
     events = {
         "email": {"MessageID": "mail-1", "From": "person@example.com", "Subject": "Refund", "TextBody": "My refund has not arrived."},
         "voice": {"CallSid": "call-1", "From": "+15550001", "SpeechResult": "The delivery never arrived."},
@@ -65,6 +176,7 @@ def test_authenticated_channel_intake_normalizes_and_deduplicates_events(client,
         )
         assert retry.status_code == 202
         assert retry.json()["status"] == "duplicate"
+    assert analyzed == ["run"] * len(events)
 
     complaints = client.get("/api/complaints", params={"limit": 20}).json()["items"]
     assert {item["channel"] for item in complaints} == set(events)
@@ -123,23 +235,19 @@ def test_full_sample_import_analysis_and_reporting_workflow(client):
     assert uploaded.status_code == 200
     assert uploaded.json()["added"] == 6
     assert uploaded.json()["skipped"] == 0
+    assert uploaded.json()["analysis"]["status"] == "completed"
+    assert uploaded.json()["analysis"]["complaints_processed"] == 6
 
-    analysis = client.post("/api/complaints/analyze", json={
-        "min_cluster_size": 2,
-        "duplicate_similarity_threshold": 0.92,
-        "duplicate_window_days": 30,
-    })
-    assert analysis.status_code == 200, analysis.text
-    result = analysis.json()
+    result = uploaded.json()["analysis"]
     assert result["complaints_processed"] == 6
     assert result["duplicate_submissions"] == 1
     assert result["issues_found"] >= 1
-    assert all("priority_score" in issue for issue in result["clusters"])
 
     ranked = client.get("/api/issues/top10")
     assert ranked.status_code == 200
     assert ranked.json()["total_issues"] == result["issues_found"]
     assert len(ranked.json()["items"]) <= 10
+    assert all("priority_score" in issue for issue in ranked.json()["items"])
     detail = client.get(f"/api/issues/{ranked.json()['items'][0]['cluster_id']}")
     assert detail.status_code == 200
     assert len(detail.json()["complaints"]) == detail.json()["issue"]["submission_count"]

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from backend.models.schemas import ComplaintCreate, CustomerFields
 from backend.routes.complaints import insert_complaint
+from backend.services.analysis import refresh_issue_analysis
 from backend.services.complaints import parse_timestamp
 
 router = APIRouter(prefix="/api/intake", tags=["channel intake"])
@@ -167,11 +168,14 @@ def _ingest(channel: str, payload: dict) -> dict:
 
     with database() as connection:
         inserted = insert_complaint(connection, complaint)
-    return {
+    result = {
         "status": "accepted" if inserted else "duplicate",
         "complaint_id": complaint.complaint_id,
         "channel": channel,
     }
+    if inserted:
+        result["analysis"] = refresh_issue_analysis()
+    return result
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)

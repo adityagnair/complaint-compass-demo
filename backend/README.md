@@ -32,6 +32,8 @@ The database adapter uses Supabase PostgreSQL when `DATABASE_URL` is configured,
 - `PATCH /api/issues/{cluster_id}/workflow` — save issue status, owner, and investigation notes
 - `POST /api/complaints/analyze` — analysis route alias for `POST /api/analysis/run`
 
+Each newly inserted complaint triggers a synchronous full-workspace analysis after its database transaction commits. A CSV import containing multiple new complaints runs analysis once after the batch; duplicate-only imports and duplicate webhook events do not trigger analysis. Successful writes include an `analysis` result (`status`, run ID and counts); if clustering fails, the complaint stays saved and the response reports `analysis.status: "failed"` so it can be retried with the manual analysis endpoint. Synchronous clustering can make complaint intake slower, especially on the first run when the embedding model must be downloaded.
+
 CSV headers accept `complaint_id` or `ID`, and `complaint_text`, `complaint`, or `description`. Optional fields include customer ID, channel/source, timestamp, severity (1–5 or minor/low/medium/high/critical), country, state, age group, student status and income bracket.
 
 ## Email, voice, chatbot and social intake

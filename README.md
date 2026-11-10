@@ -50,7 +50,7 @@ Open <http://localhost:5173>. The dashboard header shows whether the API connect
 
 ## Complaint analysis
 
-Add complaints or upload `dataset/complaints.csv`, then open **Issues** and choose **Analyze complaints**. The first analysis downloads `sentence-transformers/all-MiniLM-L6-v2` into the ignored `backend/data/model-cache` folder. Optional labels use local Ollama with `qwen2.5:3b` when available; otherwise the API generates keyword-based labels. To use the LLM labels, install Ollama and pull that model before analysis.
+New complaints are clustered automatically after they are saved; a CSV batch triggers one analysis after all valid rows are imported. You can also open **Issues** and choose **Analyze complaints** to rerun clustering manually. Each run processes all complaints currently in the workspace. Automatic analysis is synchronous, so adding a complaint can take longer while embeddings, grouping, and labels are refreshed. The first analysis downloads `sentence-transformers/all-MiniLM-L6-v2` into the ignored `backend/data/model-cache` folder. Optional labels use local Ollama with `qwen2.5:3b` when available; otherwise the API generates keyword-based labels. To use the LLM labels, install Ollama and pull that model before analysis.
 
 Email, voice, chatbot, and social integrations can forward normalized JSON events to authenticated channel webhooks. See [backend/README.md](backend/README.md#email-voice-chatbot-and-social-intake) for payload fields and deployment requirements. Voice events need a transcript from the voice provider.
 
