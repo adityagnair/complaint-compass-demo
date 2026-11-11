@@ -86,3 +86,14 @@ The included `render.yaml` creates a Render API service with Sentence Transforme
 The app uses same-origin relative `/api` requests locally through the Vite proxy. `VITE_API_BASE_URL` switches those calls to the hosted API. The workspace accepts complaint, CSV, analysis, and workflow writes. Render requires `WORKSPACE_ACCESS_TOKEN` for dashboard and API access; the frontend presents a token prompt when the token is missing or invalid. Intake webhooks use the separate `INTAKE_WEBHOOK_TOKEN`.
 
 The free Render API sleeps after 15 minutes without traffic and can take about a minute to wake. This is suitable for a competition or portfolio demo, but expect a delay on the first visit after idle time.
+
+### Alternative API deployment on Railway
+
+Railway can deploy the FastAPI backend from the repository root using `railway.json` and the root `Dockerfile`. The service builds `backend/requirements.txt`, runs one Uvicorn worker on Railway's assigned `PORT`, and uses `/api/health` for its deployment health check. The existing Render Blueprint remains available and unchanged.
+
+1. In Railway, create a project from this repository and deploy the repository root as the API service. Do not set the service root to `frontend`.
+2. In the Railway service's Variables settings, configure a persistent `DATABASE_URL`, `CORS_ALLOWED_ORIGINS` for the frontend's exact origin, `WORKSPACE_AUTH_ENABLED=true`, and separate secret values for `WORKSPACE_ACCESS_TOKEN` and `INTAKE_WEBHOOK_TOKEN`. Configure these in Railway's dashboard, not in this repository. If the demo needs Ollama severity assessment, also set `OLLAMA_SEVERITY=true`, `OLLAMA_BASE_URL` to an Ollama server reachable from Railway, and `OLLAMA_MODEL` to an installed model. A local Ollama URL such as `127.0.0.1` refers to the Railway container, not a developer's computer.
+3. Wait for `/api/health` to pass, then run `python -m backend.seed_demo` only when `backend/.env` points to a dedicated demo database; the script seeds synthetic complaints.
+4. The frontend remains configured independently on Vercel. This Railway setup does not change Vercel's `VITE_API_BASE_URL`; switch that dashboard value to the Railway service URL only if you separately decide to move the frontend to this API, and include the Vercel origin in Railway's `CORS_ALLOWED_ORIGINS`.
+
+Railway does not provision the database or Ollama service through this configuration. Use a persistent database because the container filesystem is not a durable database store, and arrange a network-reachable Ollama endpoint separately if AI severity assessment is required. The API leaves missing severity unassessed when Ollama cannot be reached.
